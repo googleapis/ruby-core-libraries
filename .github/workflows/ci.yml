@@ -22,7 +22,7 @@ on:
 
 jobs:
   CI:
-    if: ${{ github.repository == 'googleapis/google-cloud-ruby' }}
+    if: ${{ github.repository == 'googleapis/ruby-core-libraries' }}
     strategy:
       matrix:
         include:
