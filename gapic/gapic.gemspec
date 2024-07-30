@@ -34,5 +34,5 @@ Gem::Specification.new do |spec|
                ["LICENSE"]
   spec.require_paths = ["lib"]
 
-  spec.required_ruby_version = ">= 2.7"
+  spec.required_ruby_version = ">= 3.0"
 end
