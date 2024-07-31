@@ -1,0 +1,11 @@
+source "https://rubygems.org"
+
+gemspec
+
+gem "google-style", "~> 1.30.0"
+gem "minitest", "~> 5.24"
+gem "minitest-autotest", "~> 1.1"
+gem "minitest-focus", "~> 1.4"
+gem "minitest-rg", "~> 5.3"
+gem "redcarpet", "~> 3.0"
+gem "yard", "~> 0.9"

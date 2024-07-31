@@ -1,5 +1,7 @@
 {
   "gapic": "0.1.0",
   "gapic+FILLER": "0.0.0",
+  "google-logging-utils": "0.0.0",
+  "google-logging-utils+FILLER": "0.0.0",
   "zzzz+FILLER": "0.0.0"
 }
