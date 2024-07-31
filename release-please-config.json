@@ -14,6 +14,10 @@
     "gapic": {
       "component": "gapic",
       "version_file": "lib/gapic/version.rb"
+    },
+    "google-logging-utils": {
+      "component": "google-logging-utils",
+      "version_file": "lib/google/logging/utils/version.rb"
     }
   }
 }
