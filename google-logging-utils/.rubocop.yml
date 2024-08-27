@@ -8,3 +8,12 @@ AllCops:
 Naming/FileName:
   Exclude:
     - "lib/google-logging-utils.rb"
+
+Metrics/ClassLength:
+  Max: 200
+Metrics/AbcSize:
+  Max: 40
+Metrics/CyclomaticComplexity:
+  Max: 15
+Metrics/PerceivedComplexity:
+  Max: 15

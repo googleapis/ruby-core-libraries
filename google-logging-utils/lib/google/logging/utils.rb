@@ -14,4 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-require "google/logging/utils"
+require "google/logging/utils/version"
+require "google/logging/message"
+require "google/logging/source_location"
+require "google/logging/structured_formatter"
+
+##
+# Google products namespace
+#
+module Google
+  ##
+  # Classes and utilities related to logging to and from Google products
+  #
+  module Logging
+    ##
+    # Logging utilities namespace
+    #
+    module Utils
+    end
+  end
+end
