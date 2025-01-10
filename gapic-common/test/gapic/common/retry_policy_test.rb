@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+require "test_helper"
+
 require "gapic/common/retry_policy"
 
 # Test class for Gapic::Common::RetryPolicy
@@ -30,6 +32,7 @@ class RetryPolicyTest < Minitest::Test
 
   def test_perform_delay_increment_delay
     retry_policy = Gapic::Common::RetryPolicy.new initial_delay: 1, max_delay: 5, multiplier: 1.3
+    retry_policy.start! mock_delay: true
     retry_policy.perform_delay!
     refute_equal retry_policy.initial_delay, retry_policy.delay
     assert_equal 1.3, retry_policy.delay
@@ -40,6 +43,7 @@ class RetryPolicyTest < Minitest::Test
     retry_policy.define_singleton_method :retry? do
       true
     end
+    retry_policy.start! mock_delay: true
     retry_policy.perform_delay
     assert_equal 6, retry_policy.delay
   end
@@ -49,12 +53,14 @@ class RetryPolicyTest < Minitest::Test
     retry_policy.define_singleton_method :retry_error? do |_error|
       true
     end
+    retry_policy.start! mock_delay: true
     retry_policy.perform_delay
     assert_equal 15, retry_policy.delay
   end
 
   def test_max_delay_limit
     retry_policy = Gapic::Common::RetryPolicy.new initial_delay: 10, max_delay: 12, multiplier: 1.5
+    retry_policy.start! mock_delay: true
     retry_policy.perform_delay!
     assert_equal 12, retry_policy.delay
   end

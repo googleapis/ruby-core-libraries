@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+require "test_helper"
+
 require "gapic/common/polling_harness"
 require "gapic/common/retry_policy"
 
@@ -19,101 +21,76 @@ require "gapic/common/retry_policy"
 class PollingHarnessTest < Minitest::Test
   def test_init
     retry_policy = Gapic::Common::RetryPolicy.new initial_delay: 20
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy
+    polling_harness = Gapic::Common::PollingHarness.new initial_delay: 20
     assert_equal retry_policy, polling_harness.retry_policy
   end
 
   def test_wait_perform_delay_once
-    should_wait = true
-    retry_policy_mock = Minitest::Mock.new
-    retry_policy_mock.expect :update_deadline!, nil, []
-    retry_policy_mock.expect :perform_delay!, nil, []
-    retry_policy_mock.expect :retry_with_deadline?, true, []
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy_mock
-
-    polling_harness.wait do
-      if should_wait
-        should_wait = false
-        nil
-      else
-        should_wait
-      end
+    wait_count = 0
+    polling_harness = Gapic::Common::PollingHarness.new
+    result = polling_harness.wait mock_delay: true do
+      wait_count += 1
+      wait_count <= 1 ? nil : :done
     end
-    retry_policy_mock.verify
-    assert_equal false, should_wait
+    assert_equal 1, polling_harness.retry_policy.perform_delay_count
+    assert_equal 2, wait_count
+    assert_equal :done, result
   end
 
   def test_wait_perform_delay_many
-    perform_delay_total = 5
-    retry_policy_mock = Minitest::Mock.new
-    retry_policy_mock.expect :update_deadline!, nil, []
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy_mock
-
-    polling_harness.wait do
-      if perform_delay_total.positive?
-        retry_policy_mock.expect :perform_delay!, nil, []
-        retry_policy_mock.expect :retry_with_deadline?, true, []
-        perform_delay_total -= 1
-        nil
-      else
-        perform_delay_total
-      end
+    wait_count = 0
+    polling_harness = Gapic::Common::PollingHarness.new
+    result = polling_harness.wait mock_delay: true do
+      wait_count += 1
+      wait_count <= 4 ? nil : :done
     end
-    retry_policy_mock.verify
-    assert_equal 0, perform_delay_total
+    assert_equal 4, polling_harness.retry_policy.perform_delay_count
+    assert_equal 5, wait_count
+    assert_equal :done, result
   end
 
   def test_wait_with_retriable_code
-    perform_delay_count = 0
-    retry_policy = Gapic::Common::RetryPolicy.new retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
-    retry_policy.define_singleton_method :perform_delay! do
-      perform_delay_count += 1
+    wait_count = 0
+    polling_harness = Gapic::Common::PollingHarness.new retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+    result = polling_harness.wait mock_delay: true do
+      wait_count += 1
+      raise ::GRPC::Unavailable if wait_count <= 1
+      :done
     end
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy
-
-    should_raise_error = true
-    polling_harness.wait do
-      if should_raise_error
-        should_raise_error = false
-        raise ::GRPC::Unavailable
-      else
-        should_raise_error
-      end
-    end
-    assert_equal 1, perform_delay_count
+    assert_equal 1, polling_harness.retry_policy.perform_delay_count
+    assert_equal 2, wait_count
+    assert_equal :done, result
   end
 
   def test_wait_non_retriable_code
-    perform_delay_count = 0
-    retry_policy = Gapic::Common::RetryPolicy.new retry_codes: [GRPC::Core::StatusCodes::RESOURCE_EXHAUSTED]
-    retry_policy.define_singleton_method :perform_delay! do
-      perform_delay_count += 1
-    end
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy
+    wait_count = 0
+    polling_harness = Gapic::Common::PollingHarness.new retry_codes: [GRPC::Core::StatusCodes::RESOURCE_EXHAUSTED]
     assert_raises ::GRPC::Aborted do
-      polling_harness.wait do
-        raise ::GRPC::Aborted
+      polling_harness.wait mock_delay: true do
+        wait_count += 1
+        raise ::GRPC::Aborted if wait_count <= 1
+        :done
       end
     end
-    assert_equal 0, perform_delay_count
+    assert_equal 0, polling_harness.retry_policy.perform_delay_count
+    assert_equal 1, wait_count
   end
 
   def test_wait_argument_error
-    retry_policy = Gapic::Common::RetryPolicy.new
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy
+    polling_harness = Gapic::Common::PollingHarness.new
     assert_raises ArgumentError do
       polling_harness.wait
     end
   end
 
   def test_wait_with_timeout
-    retry_policy = Gapic::Common::RetryPolicy.new initial_delay: 2, multiplier: 1, timeout: 3
-    polling_harness = Gapic::Common::PollingHarness.new retry_policy: retry_policy
     wait_count = 0
-    polling_harness.wait do
+    polling_harness = Gapic::Common::PollingHarness.new initial_delay: 2, multiplier: 1, timeout: 3
+    polling_harness.wait mock_delay: true do
       wait_count += 1
       nil
     end
     assert_equal 2, wait_count
+    assert_equal 2, polling_harness.retry_policy.perform_delay_count
   end
 end

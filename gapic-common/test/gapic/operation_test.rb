@@ -358,51 +358,9 @@ describe Gapic::Operation do
       mock_client = MockLroClient.new get_method: get_method
       op = create_op GrpcOp.new(done: false), client: mock_client
 
-      sleep_counts = [10.0, 13.0, 16.900000000000002]
-      sleep_mock = Minitest::Mock.new
-      sleep_counts.each do |sleep_count|
-        sleep_mock.expect :sleep, nil, [sleep_count]
-      end
-      sleep_proc = ->(count) { sleep_mock.sleep count }
-
-      Kernel.stub :sleep, sleep_proc do
-        time_now = Time.now
-        Time.stub :now, time_now do
-          op.wait_until_done!
-        end
-      end
-
-      sleep_mock.verify
-
-      _(to_call).must_equal 0
-    end
-
-    it "should wait until the operation is done" do
-      to_call = 3
-      get_method = proc do
-        to_call -= 1
-        done = to_call == 0
-        GrpcOp.new done: done, response: RESULT_ANY
-      end
-
-      mock_client = MockLroClient.new get_method: get_method
-      op = create_op GrpcOp.new(done: false), client: mock_client
-
-      sleep_counts = [10.0, 13.0, 16.900000000000002]
-      sleep_mock = Minitest::Mock.new
-      sleep_counts.each do |sleep_count|
-        sleep_mock.expect :sleep, nil, [sleep_count]
-      end
-      sleep_proc = ->(count) { sleep_mock.sleep count }
-
-      Kernel.stub :sleep, sleep_proc do
-        time_now = Time.now
-        Time.stub :now, time_now do
-          op.wait_until_done!
-        end
-      end
-
-      sleep_mock.verify
+      retry_policy = Gapic::Operation::RetryPolicy.new
+      retry_policy.start! mock_delay: true
+      op.wait_until_done! retry_policy: retry_policy
 
       _(to_call).must_equal 0
     end
@@ -412,27 +370,11 @@ describe Gapic::Operation do
       mock_client = MockLroClient.new get_method: get_method
       op = create_op GrpcOp.new(done: false), client: mock_client
 
-      sleep_counts = [10, 20, 40, 80]
-      sleep_mock = Minitest::Mock.new
-      sleep_counts.each do |sleep_count|
-        sleep_mock.expect :sleep, nil, [sleep_count]
-      end
-      sleep_proc = ->(count) { sleep_mock.sleep count }
-
-      Kernel.stub :sleep, sleep_proc do
-        time_now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        incrementing_time = lambda do |_clock|
-          delay = sleep_counts.shift || 160
-          time_now += delay
-        end
-        Process.stub :clock_gettime, incrementing_time do
-          retry_config = { initial_delay: 10, multiplier: 2, max_delay: (5 * 60), timeout: 400 }
-          op.wait_until_done! retry_policy: retry_config
-          _(op).wont_be :done?
-        end
-      end
-
-      sleep_mock.verify
+      retry_policy = Gapic::Operation::RetryPolicy.new initial_delay: 10, multiplier: 2,
+                                                       max_delay: (5 * 60), timeout: 400
+      retry_policy.start! mock_delay: true
+      op.wait_until_done! retry_policy: retry_policy
+      _(op).wont_be :done?
     end
 
     it "retries with exponential backoff" do
@@ -448,27 +390,16 @@ describe Gapic::Operation do
       mock_client = MockLroClient.new get_method: get_method
       op = create_op GrpcOp.new(done: false), client: mock_client
 
-      sleep_counts = [10, 20, 40, 80, 160, 300, 300, 300, 300, 300]
-      sleep_mock = Minitest::Mock.new
-      sleep_counts.each do |sleep_count|
-        sleep_mock.expect :sleep, nil, [sleep_count]
+      expected_delays = [10, 20, 40, 80, 160, 300, 300, 300, 300, 300]
+      delays_tester = proc do |delay|
+        _(delay).must_equal expected_delays.shift
       end
-      sleep_proc = ->(count) { sleep_mock.sleep count }
-
-      Kernel.stub :sleep, sleep_proc do
-        time_now = Time.now
-        incrementing_time = lambda do
-          delay = sleep_counts.shift || 300
-          time_now += delay
-        end
-        Time.stub :now, incrementing_time do
-          retry_config = { initial_delay: 10, multiplier: 2, max_delay: (5 * 60), timeout: (60 * 60) }
-          op.wait_until_done! retry_policy: retry_config
-          _(op).must_be :done?
-        end
-      end
-
-      sleep_mock.verify
+      retry_policy = Gapic::Operation::RetryPolicy.new initial_delay: 10, multiplier: 2,
+                                                       max_delay: (5 * 60), timeout: (60 * 60)
+      retry_policy.start! mock_delay: delays_tester
+      op.wait_until_done! retry_policy: retry_policy
+      _(op).must_be :done?
+      _(expected_delays).must_be :empty?
     end
   end
 

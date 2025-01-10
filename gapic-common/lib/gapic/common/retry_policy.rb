@@ -16,7 +16,9 @@ require "gapic/common/error_codes"
 
 module Gapic
   module Common
+    ##
     # Gapic Common retry policy base class.
+    #
     class RetryPolicy
       # @return [Numeric] Default initial delay in seconds.
       DEFAULT_INITIAL_DELAY = 1
@@ -24,29 +26,28 @@ module Gapic
       DEFAULT_MAX_DELAY = 15
       # @return [Numeric] Default delay scaling factor for subsequent retry attempts.
       DEFAULT_MULTIPLIER = 1.3
-      # @return [Array<String|Numeric>] Default list of retry codes.
+      # @return [Array<String|Integer>] Default list of retry codes.
       DEFAULT_RETRY_CODES = [].freeze
       # @return [Numeric] Default timeout threshold value in seconds.
       DEFAULT_TIMEOUT = 3600 # One hour
 
       ##
-      # Create new Gapic::Common:RetryPolicy instance.
-      #
-      # Instance values are set as `nil` to determine whether values are overriden from default.
+      # Create new Gapic::Common::RetryPolicy instance.
       #
       # @param initial_delay [Numeric] Initial delay in seconds.
       # @param max_delay [Numeric] Maximum delay in seconds.
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
-      # @param retry_codes [Array<String|Numeric>] List of retry codes.
+      # @param retry_codes [Array<String|Integer>] List of retry codes.
       # @param timeout [Numeric] Timeout threshold value in seconds.
       #
       def initialize initial_delay: nil, max_delay: nil, multiplier: nil, retry_codes: nil, timeout: nil
+        # Instance values are set as `nil` to determine whether values are overriden from default.
         @initial_delay = initial_delay
         @max_delay = max_delay
         @multiplier = multiplier
         @retry_codes = convert_codes retry_codes
         @timeout = timeout
-        @delay = nil
+        start!
       end
 
       # @return [Numeric] Initial delay in seconds.
@@ -64,7 +65,7 @@ module Gapic
         @multiplier || DEFAULT_MULTIPLIER
       end
 
-      # @return [Array<Numeric>] List of retry codes.
+      # @return [Array<Integer>] List of retry codes.
       def retry_codes
         @retry_codes || DEFAULT_RETRY_CODES
       end
@@ -72,6 +73,20 @@ module Gapic
       # @return [Numeric] Timeout threshold value in seconds.
       def timeout
         @timeout || DEFAULT_TIMEOUT
+      end
+
+      ##
+      # Returns a duplicate in a non-executing state, i.e. with the deadline
+      # and current delay reset.
+      #
+      # @return [RetryPolicy]
+      #
+      def dup
+        RetryPolicy.new initial_delay: @initial_delay,
+                        max_delay: @max_delay,
+                        multiplier: @multiplier,
+                        retry_codes: @retry_codes,
+                        timeout: @timeout
       end
 
       ##
@@ -97,6 +112,7 @@ module Gapic
       def perform_delay!
         delay!
         increment_delay!
+        @perform_delay_count += 1
         true
       end
 
@@ -106,15 +122,38 @@ module Gapic
       # @return [Numeric] Time delay in seconds.
       #
       def delay
-        @delay || initial_delay
+        @delay
       end
 
       ##
-      # Sets a deadline based on the current time.
+      # Current number of times the delay has been performed
       #
-      # @return [Numeric] The deadline for timeout-based retry policies.
-      def update_deadline!
-        @deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      # @return [Integer]
+      #
+      def perform_delay_count
+        @perform_delay_count
+      end
+
+      ##
+      # Start tracking the deadline and delay by initializing those values.
+      #
+      # This is normally done when the object is constructed, but it can be
+      # done explicitly in order to reinitialize the state in case this
+      # retry policy was created in the past or is being reused.
+      #
+      # @param mock_delay [boolean,Proc] if truthy, delays are "mocked",
+      #     meaning they do not actually take time, but are measured as if they
+      #     did, which is useful for tests. If set to a Proc, it will be called
+      #     whenever a delay would happen, and passed the delay in seconds,
+      #     also useful for testing.
+      #
+      def start! mock_delay: false
+        @mock_time = mock_delay ? Process.clock_gettime(Process::CLOCK_MONOTONIC) : nil
+        @mock_delay_callback = mock_delay.respond_to?(:call) ? mock_delay : nil
+        @deadline = cur_time + timeout
+        @delay = initial_delay
+        @perform_delay_count = 0
+        self
       end
 
       ##
@@ -130,7 +169,7 @@ module Gapic
       # @private
       # @return [Boolean] Whether this policy should be retried based on the deadline.
       def retry_with_deadline?
-        deadline > Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        deadline > cur_time
       end
 
       ##
@@ -172,7 +211,12 @@ module Gapic
       # @private
       # @return [Numeric] The performed delay.
       def delay!
-        Kernel.sleep delay
+        if @mock_time
+          @mock_time += delay
+          @mock_delay_callback&.call delay
+        else
+          Kernel.sleep delay
+        end
       end
 
       # @private
@@ -184,11 +228,17 @@ module Gapic
       # @private
       # @return [Numeric] The deadline for timeout-based policies.
       def deadline
-        @deadline ||= update_deadline!
+        @deadline
       end
 
       # @private
-      # @return [Array<Numeric> Error codes converted to their respective integer values.
+      # Mockable way to get time.
+      def cur_time
+        @mock_time || Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
+
+      # @private
+      # @return [Array<Integer> Error codes converted to their respective integer values.
       def convert_codes input_codes
         return nil if input_codes.nil?
         Array(input_codes).map do |obj|
