@@ -15,6 +15,7 @@
 require "test_helper"
 require "gapic/grpc"
 require "google/rpc/error_details_pb"
+require "google/rpc/status_pb"
 require "google/protobuf/timestamp_pb"
 
 class GrpcBadStatusStatusDetailsTest < Minitest::Test

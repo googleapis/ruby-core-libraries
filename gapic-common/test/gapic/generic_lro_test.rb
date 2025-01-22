@@ -253,24 +253,10 @@ class GenericLROTest < Minitest::Test
     mock_client = MockLroClient.new get_method: get_method
     op = create_op MockOperation.new(status: :NOTDONE, name: NAME), client: mock_client
 
-    sleep_counts = [10.0, 13.0, 16.900000000000002]
-    sleep_mock = Minitest::Mock.new
-    sleep_counts.each do |sleep_count|
-      sleep_mock.expect :sleep, nil, [sleep_count]
-    end
+    retry_policy = Gapic::Operation::RetryPolicy.new
+    retry_policy.start! mock_delay: true
+    op.wait_until_done! retry_policy: retry_policy
 
-    sleep_proc = ->(count) do 
-      sleep_mock.sleep count 
-    end
-
-    Kernel.stub :sleep, sleep_proc do
-      time_now = Time.now
-      Time.stub :now, time_now do
-        op.wait_until_done!
-      end
-    end
-
-    sleep_mock.verify
     assert_equal 0, to_call
   end
 
@@ -291,24 +277,10 @@ class GenericLROTest < Minitest::Test
       reload_called += 1
     end
 
-    sleep_counts = [10.0, 13.0, 16.900000000000002]
-    sleep_mock = Minitest::Mock.new
-    sleep_counts.each do |sleep_count|
-      sleep_mock.expect :sleep, nil, [sleep_count]
-    end
+    retry_policy = Gapic::Operation::RetryPolicy.new
+    retry_policy.start! mock_delay: true
+    op.wait_until_done! retry_policy: retry_policy
 
-    sleep_proc = ->(count) do 
-      sleep_mock.sleep count 
-    end
-
-    Kernel.stub :sleep, sleep_proc do
-      time_now = Time.now
-      Time.stub :now, time_now do
-        op.wait_until_done!
-      end
-    end
-
-    sleep_mock.verify
     assert_equal 0, to_call
     assert_equal 3, reload_called
   end
@@ -319,27 +291,11 @@ class GenericLROTest < Minitest::Test
     mock_client = MockLroClient.new get_method: get_method
     op = create_op MockOperation.new(status: :NOTDONE, name: NAME), client: mock_client
 
-    sleep_counts = [10, 20, 40, 80]
-    sleep_mock = Minitest::Mock.new
-    sleep_counts.each do |sleep_count|
-      sleep_mock.expect :sleep, nil, [sleep_count]
-    end
-    sleep_proc = ->(count) { sleep_mock.sleep count }
-
-    Kernel.stub :sleep, sleep_proc do
-      time_now = Time.now
-      incrementing_time = lambda do
-        delay = sleep_counts.shift || 160
-        time_now += delay
-      end
-      Time.stub :now, incrementing_time do
-        retry_config = { initial_delay: 10, multiplier: 2, max_delay: (5 * 60), timeout: 400 }
-        op.wait_until_done! retry_policy: retry_config
-        refute op.done?
-      end
-    end
-
-    sleep_mock.verify
+    retry_policy = Gapic::Operation::RetryPolicy.new initial_delay: 10, multiplier: 2,
+                                                     max_delay: (5 * 60), timeout: 400
+    retry_policy.start! mock_delay: true
+    op.wait_until_done! retry_policy: retry_policy
+    refute op.done?
   end
 
   # Retry options are applied correctly
@@ -356,27 +312,16 @@ class GenericLROTest < Minitest::Test
     mock_client = MockLroClient.new get_method: get_method
     op = create_op MockOperation.new(status: :NOT_DONE, name: NAME), client: mock_client
 
-    sleep_counts = [10, 20, 40, 80, 160, 300, 300, 300, 300, 300]
-    sleep_mock = Minitest::Mock.new
-    sleep_counts.each do |sleep_count|
-      sleep_mock.expect :sleep, nil, [sleep_count]
+    expected_delays = [10, 20, 40, 80, 160, 300, 300, 300, 300, 300]
+    delays_tester = proc do |delay|
+      assert_equal expected_delays.shift, delay
     end
-    sleep_proc = ->(count) { sleep_mock.sleep count }
-
-    Kernel.stub :sleep, sleep_proc do
-      time_now = Time.now
-      incrementing_time = lambda do
-        delay = sleep_counts.shift || 300
-        time_now += delay
-      end
-      Time.stub :now, incrementing_time do
-        retry_config = { initial_delay: 10, multiplier: 2, max_delay: (5 * 60), timeout: (60 * 60) }
-        op.wait_until_done! retry_policy: retry_config
-        assert op.done?
-      end
-    end
-
-    sleep_mock.verify
+    retry_policy = Gapic::Operation::RetryPolicy.new initial_delay: 10, multiplier: 2,
+                                                      max_delay: (5 * 60), timeout: (60 * 60)
+    retry_policy.start! mock_delay: delays_tester
+    op.wait_until_done! retry_policy: retry_policy
+    assert op.done?
+    assert expected_delays.empty?
   end
 
   # On_done callback is triggered if operation is Done before wrapping
