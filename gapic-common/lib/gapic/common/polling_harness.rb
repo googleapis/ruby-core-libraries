@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+require "gapic/common/retry_policy"
+
 module Gapic
   module Common
     ##
