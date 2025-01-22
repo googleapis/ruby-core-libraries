@@ -1,5 +1,11 @@
 # Release History
 
+### 0.25.0 (2025-01-22)
+
+#### Features
+
+* Implement a polling harness ([#20](https://github.com/googleapis/ruby-core-libraries/issues/20)) 
+
 ### 0.24.0 (2024-12-05)
 
 #### Features
