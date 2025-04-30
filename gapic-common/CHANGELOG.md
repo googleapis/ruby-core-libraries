@@ -1,5 +1,11 @@
 # Release History
 
+### 1.0.0 (2025-04-30)
+
+#### Features
+
+* Bump version to 1.0 ([#33](https://github.com/googleapis/ruby-core-libraries/issues/33)) 
+
 ### 0.26.0 (2025-04-30)
 
 #### Features
@@ -241,4 +247,3 @@
 ### 0.1.0 / 2020-01-09
 
 Initial release
-
