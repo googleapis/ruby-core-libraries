@@ -1,5 +1,11 @@
 # Release History
 
+### 0.26.0 (2025-04-30)
+
+#### Features
+
+* Updated required Ruby version to 3.1 ([#29](https://github.com/googleapis/ruby-core-libraries/issues/29)) 
+
 ### 0.25.0 (2025-01-22)
 
 #### Features
