@@ -226,6 +226,7 @@ module Google
         "httpRequest",
         "timestamp"
       ].freeze
+      private_constant :DISALLOWED_FIELDS
 
       def interpret_fields fields
         return nil if fields.nil?
