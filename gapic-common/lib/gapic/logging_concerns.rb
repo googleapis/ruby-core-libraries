@@ -55,12 +55,12 @@ module Gapic
         end
       end
 
-      def info &block
-        log Logger::INFO, &block
+      def info(&)
+        log(Logger::INFO, &)
       end
 
-      def debug &block
-        log Logger::DEBUG, &block
+      def debug(&)
+        log(Logger::DEBUG, &)
       end
 
       ##
