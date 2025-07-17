@@ -42,6 +42,10 @@ module Gapic
         @kwargs = kwargs
       end
 
+      def enabled?
+        !!@logger
+      end
+
       def log severity
         return unless @logger
         locations = caller_locations
