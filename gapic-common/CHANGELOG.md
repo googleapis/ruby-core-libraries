@@ -1,5 +1,11 @@
 # Release History
 
+### 1.0.1 (2025-07-17)
+
+#### Bug Fixes
+
+* Removed log preprocessing of large payload data when logging is disabled ([#35](https://github.com/googleapis/ruby-core-libraries/issues/35)) 
+
 ### 1.0.0 (2025-04-30)
 
 #### Features
