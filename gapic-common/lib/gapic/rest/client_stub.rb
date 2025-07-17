@@ -278,7 +278,7 @@ module Gapic
       end
 
       def log_request method_name, request_id, try_number, body, metadata
-        return unless stub_logger
+        return unless stub_logger&.enabled?
         stub_logger.info do |entry|
           entry.set_system_name
           entry.set_service
@@ -299,7 +299,7 @@ module Gapic
       end
 
       def log_response method_name, request_id, try_number, response, is_server_streaming
-        return unless stub_logger
+        return unless stub_logger&.enabled?
         stub_logger.info do |entry|
           entry.set_system_name
           entry.set_service

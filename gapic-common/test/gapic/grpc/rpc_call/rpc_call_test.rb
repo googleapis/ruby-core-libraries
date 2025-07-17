@@ -35,6 +35,47 @@ class RpcCallTest < Minitest::Test
     assert_nil deadline_arg
   end
 
+  def test_call_with_logging_enabled
+    expected_result = "In the Shadow of Z'ha'dum"
+
+    api_meth_stub = proc do |deadline: nil, **_kwargs|
+      deadline_arg = deadline
+      OperationStub.new { expected_result }
+    end
+
+    logio = StringIO.new
+    logger = Logger.new logio
+    stub_logger = Gapic::LoggingConcerns::StubLogger.new logger: logger
+    rpc_call = Gapic::ServiceStub::RpcCall.new api_meth_stub, stub_logger: stub_logger
+
+    result = rpc_call.call(Object.new)
+
+    assert_equal expected_result, result
+    assert_includes logio.string, expected_result
+  end
+
+  class CrashingResponse
+    def to_s
+      raise "CRASH!!!"
+    end
+  end
+
+  def test_call_with_logging_disabled
+    expected_result = CrashingResponse.new
+
+    api_meth_stub = proc do |deadline: nil, **_kwargs|
+      deadline_arg = deadline
+      OperationStub.new { expected_result }
+    end
+
+    stub_logger = Gapic::LoggingConcerns::StubLogger.new logger: nil
+    rpc_call = Gapic::ServiceStub::RpcCall.new api_meth_stub, stub_logger: stub_logger
+
+    result = rpc_call.call(Object.new)
+
+    assert_equal expected_result, result
+  end
+
   def test_call_with_negative_timeout
     deadline_arg = nil
 
