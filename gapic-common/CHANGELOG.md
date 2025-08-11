@@ -1,5 +1,11 @@
 # Release History
 
+### 1.1.0 (2025-08-11)
+
+#### Features
+
+* add http binding configuration ([#38](https://github.com/googleapis/ruby-core-libraries/issues/38)) 
+
 ### 1.0.1 (2025-07-17)
 
 #### Bug Fixes
