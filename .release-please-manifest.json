@@ -1,7 +1,7 @@
 {
   "gapic": "0.3.0",
   "gapic+FILLER": "0.0.0",
-  "gapic-common": "1.1.0",
+  "gapic-common": "1.2.0",
   "gapic-common+FILLER": "0.0.0",
   "google-logging-utils": "0.2.0",
   "google-logging-utils+FILLER": "0.0.0",

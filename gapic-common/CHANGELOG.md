@@ -1,5 +1,11 @@
 # Release History
 
+### 1.2.0 (2025-09-04)
+
+#### Features
+
+* update google-protobuf dependency ([#41](https://github.com/googleapis/ruby-core-libraries/issues/41)) 
+
 ### 1.1.0 (2025-08-11)
 
 #### Features
