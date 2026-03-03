@@ -57,7 +57,7 @@ class ClientStubRetryRetryTest < ClientStubTestBase
     options = Gapic::CallOptions.new(
       timeout: time_delay * to_attempt + 0.1, # `+0.1` means that timeout stays positive on last cycle  
       retry_policy: {
-        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], 
+        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0
       }
     )
 

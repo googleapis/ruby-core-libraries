@@ -39,7 +39,7 @@ class RpcCallRetryRaiseTest < Minitest::Test
     rpc_call = Gapic::ServiceStub::RpcCall.new api_meth_stub
 
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
     assert_raises GRPC::BadStatus do
       rpc_call.call Object.new, options: options
@@ -54,7 +54,7 @@ class RpcCallRetryRaiseTest < Minitest::Test
     rpc_call = Gapic::ServiceStub::RpcCall.new api_meth_stub
 
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
     assert_raises FakeCodeError do
       rpc_call.call Object.new, options: options
@@ -88,7 +88,7 @@ class RpcCallRetryRaiseTest < Minitest::Test
 
     options = Gapic::CallOptions.new(
       timeout: 300,
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     Kernel.stub :sleep, sleep_proc do
@@ -129,7 +129,7 @@ class RpcCallRetryRaiseTest < Minitest::Test
     sleep_proc = ->(count) { sleep_mock.sleep count }
 
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     Kernel.stub :sleep, sleep_proc do
