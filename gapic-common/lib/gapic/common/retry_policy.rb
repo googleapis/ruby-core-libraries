@@ -201,7 +201,7 @@ module Gapic
         @initial_delay ||= retry_policy[:initial_delay]
         @multiplier    ||= retry_policy[:multiplier]
         @max_delay     ||= retry_policy[:max_delay]
-        @jitter        = retry_policy.key?(:jitter) ? retry_policy[:jitter] : @jitter
+        @jitter        ||= retry_policy[:jitter]
 
         self
       end
