@@ -1,5 +1,11 @@
 # Release History
 
+### 1.3.0 (2026-03-05)
+
+#### Features
+
+* add jitter to retries ([#54](https://github.com/googleapis/ruby-core-libraries/issues/54)) 
+
 ### 1.2.0 (2025-09-04)
 
 #### Features
