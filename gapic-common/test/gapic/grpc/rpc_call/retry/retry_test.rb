@@ -49,7 +49,7 @@ class RpcCallRetryTest < Minitest::Test
     rpc_call = Gapic::ServiceStub::RpcCall.new api_meth_stub
     options = Gapic::CallOptions.new(
       timeout: 300,
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     sleep_mock = Minitest::Mock.new

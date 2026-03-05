@@ -55,7 +55,7 @@ class ClientStubRetryRaiseLegacyTest < ClientStubTestBase
     end
     
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     client_stub.stub :base_make_http_request, make_request_proc do
@@ -91,10 +91,9 @@ class ClientStubRetryRaiseLegacyTest < ClientStubTestBase
 
     options = Gapic::CallOptions.new(
       retry_policy: {
-        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], 
+        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0
       }
     )
-
     Kernel.stub :sleep, sleep_proc do
       client_stub.stub :base_make_http_request, make_request_proc do
         ex = assert_raises Faraday::TimeoutError do

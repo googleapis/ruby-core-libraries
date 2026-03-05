@@ -317,7 +317,7 @@ class GenericLROTest < Minitest::Test
       assert_equal expected_delays.shift, delay
     end
     retry_policy = Gapic::Operation::RetryPolicy.new initial_delay: 10, multiplier: 2,
-                                                      max_delay: (5 * 60), timeout: (60 * 60)
+                                                      max_delay: (5 * 60), timeout: (60 * 60), jitter: 0
     retry_policy.start! mock_delay: delays_tester
     op.wait_until_done! retry_policy: retry_policy
     assert op.done?

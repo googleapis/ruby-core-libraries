@@ -31,6 +31,11 @@ module Gapic
       # @return [Numeric] Default timeout threshold value in seconds.
       DEFAULT_TIMEOUT = 3600 # One hour
 
+      # @private
+      # @return [Numeric] Default random jitter added to delay in seconds.
+      DEFAULT_JITTER = 1.0
+      private_constant :DEFAULT_JITTER
+
       ##
       # Create new Gapic::Common::RetryPolicy instance.
       #
@@ -39,14 +44,18 @@ module Gapic
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
       # @param retry_codes [Array<String|Integer>] List of retry codes.
       # @param timeout [Numeric] Timeout threshold value in seconds.
+      # @param jitter [Numeric] Random jitter added to the delay in seconds.
       #
-      def initialize initial_delay: nil, max_delay: nil, multiplier: nil, retry_codes: nil, timeout: nil
+      def initialize initial_delay: nil, max_delay: nil, multiplier: nil, retry_codes: nil, timeout: nil, jitter: nil
+        raise ArgumentError, "jitter cannot be negative" if jitter&.negative?
+
         # Instance values are set as `nil` to determine whether values are overriden from default.
         @initial_delay = initial_delay
         @max_delay = max_delay
         @multiplier = multiplier
         @retry_codes = convert_codes retry_codes
         @timeout = timeout
+        @jitter = jitter
         start!
       end
 
@@ -75,6 +84,11 @@ module Gapic
         @timeout || DEFAULT_TIMEOUT
       end
 
+      # @return [Numeric] Random jitter added to the delay in seconds.
+      def jitter
+        @jitter || DEFAULT_JITTER
+      end
+
       ##
       # Returns a duplicate in a non-executing state, i.e. with the deadline
       # and current delay reset.
@@ -86,7 +100,8 @@ module Gapic
                         max_delay: @max_delay,
                         multiplier: @multiplier,
                         retry_codes: @retry_codes,
-                        timeout: @timeout
+                        timeout: @timeout,
+                        jitter: @jitter
       end
 
       ##
@@ -186,6 +201,7 @@ module Gapic
         @initial_delay ||= retry_policy[:initial_delay]
         @multiplier    ||= retry_policy[:multiplier]
         @max_delay     ||= retry_policy[:max_delay]
+        @jitter        ||= retry_policy[:jitter]
 
         self
       end
@@ -197,30 +213,34 @@ module Gapic
           other.max_delay == max_delay &&
           other.multiplier == multiplier &&
           other.retry_codes == retry_codes &&
-          other.timeout == timeout
+          other.timeout == timeout &&
+          other.jitter == jitter
       end
       alias == eql?
 
       # @private Hash code
       def hash
-        [initial_delay, max_delay, multiplier, retry_codes, timeout].hash
+        [initial_delay, max_delay, multiplier, retry_codes, timeout, jitter].hash
       end
 
       private
 
       # @private
+      # Perform the currently calculated delay, adding a jitter.
+      #
       # @return [Numeric] The performed delay.
       def delay!
+        delay_to_perform = [delay + Kernel.rand(0.0..jitter), max_delay].min
         if @mock_time
-          @mock_time += delay
-          @mock_delay_callback&.call delay
+          @mock_time += delay_to_perform
+          @mock_delay_callback&.call delay_to_perform
         else
-          Kernel.sleep delay
+          Kernel.sleep delay_to_perform
         end
       end
 
       # @private
-      # @return [Numeric] The new delay in seconds.
+      # @return [Numeric] The new delay (sans jitter) in seconds.
       def increment_delay!
         @delay = [delay * multiplier, max_delay].min
       end

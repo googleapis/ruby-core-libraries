@@ -38,13 +38,15 @@ module Gapic
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
       # @param max_delay [Numeric] Maximum delay in seconds.
       # @param timeout [Numeric] Timeout threshold value in seconds.
+      # @param jitter [Numeric] Random jitter added to the delay in seconds.
       #
-      def initialize initial_delay: nil, multiplier: nil, max_delay: nil, timeout: nil
+      def initialize initial_delay: nil, multiplier: nil, max_delay: nil, timeout: nil, jitter: nil
         super(
           initial_delay: initial_delay || DEFAULT_INITIAL_DELAY,
           max_delay: max_delay || DEFAULT_MAX_DELAY,
           multiplier: multiplier || DEFAULT_MULTIPLIER,
-          timeout: timeout || DEFAULT_TIMEOUT
+          timeout: timeout || DEFAULT_TIMEOUT,
+          jitter: jitter
         )
       end
     end

@@ -30,8 +30,9 @@ module Gapic
       # @param initial_delay [Numeric] Initial delay in seconds.
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
       # @param max_delay [Numeric] Maximum delay in seconds.
+      # @param jitter [Numeric] Random jitter added to the delay in seconds.
       #
-      def initialize retry_codes: nil, initial_delay: nil, multiplier: nil, max_delay: nil
+      def initialize retry_codes: nil, initial_delay: nil, multiplier: nil, max_delay: nil, jitter: nil
         super
       end
     end

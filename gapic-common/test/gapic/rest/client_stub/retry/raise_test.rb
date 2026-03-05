@@ -29,7 +29,7 @@ class ClientStubRetryRaiseTest < ClientStubTestBase
     end
 
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     client_stub.stub :base_make_http_request, make_request_proc do
@@ -78,7 +78,7 @@ class ClientStubRetryRaiseTest < ClientStubTestBase
     end
     
     options = Gapic::CallOptions.new(
-      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE] }
+      retry_policy: { retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0 }
     )
 
     client_stub.stub :base_make_http_request, make_request_proc do
@@ -125,7 +125,7 @@ class ClientStubRetryRaiseTest < ClientStubTestBase
     options = Gapic::CallOptions.new(
       timeout: time_delay * to_attempt + 0.1, # `+0.1` means that timeout stays positive on last cycle  
       retry_policy: {
-        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], 
+        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0
       }
     )
 
@@ -173,10 +173,9 @@ class ClientStubRetryRaiseTest < ClientStubTestBase
 
     options = Gapic::CallOptions.new(
       retry_policy: {
-        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], 
+        retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], jitter: 0
       }
     )
-
     Kernel.stub :sleep, sleep_proc do
       client_stub.stub :base_make_http_request, make_request_proc do
         ex = assert_raises ::Gapic::Rest::DeadlineExceededError do

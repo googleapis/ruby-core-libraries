@@ -31,7 +31,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_retries_configured_grpc_errors
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      jitter: 0
     )
     grpc_error = GRPC::Unavailable.new
 
@@ -50,7 +51,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_retries_configured_http_errors
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      jitter: 0
     )
     faraday_error = OpenStruct.new response_status: 503
 
@@ -69,7 +71,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_retries_configured_http_errors_with_absent_status
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNKNOWN]
+      retry_codes: [GRPC::Core::StatusCodes::UNKNOWN],
+      jitter: 0
     )
     faraday_error = OpenStruct.new response_status: nil
 
@@ -88,7 +91,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_wont_retry_unconfigured_grpc_errors
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      jitter: 0
     )
     grpc_error = GRPC::Unimplemented.new
 
@@ -103,7 +107,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_wont_retry_non_grpc_errors
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      jitter: 0
     )
     other_error = StandardError.new
 
@@ -116,7 +121,8 @@ class RetryPolicyCallTest < Minitest::Test
 
   def test_incremental_backoff
     retry_policy = Gapic::CallOptions::RetryPolicy.new(
-      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE]
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      jitter: 0
     )
     grpc_error = GRPC::Unavailable.new
 
