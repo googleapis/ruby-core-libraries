@@ -44,9 +44,13 @@ module Gapic
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
       # @param retry_codes [Array<String|Integer>] List of retry codes.
       # @param timeout [Numeric] Timeout threshold value in seconds.
-      # @param jitter [Numeric] Random jitter added to the delay in seconds.
+      # @param retry_predicate [Proc, nil] The predicate to evaluate whether to retry on a given error. Optional.
+      #   If the predicate is specified, it is run first. If it returns nil, the decision on
+      #   whether to retry is made on the basis of retry_codes. Otherwise, the truthiness of
+      #   the return value determines whether to retry.
       #
-      def initialize initial_delay: nil, max_delay: nil, multiplier: nil, retry_codes: nil, timeout: nil, jitter: nil
+      def initialize initial_delay: nil, max_delay: nil, multiplier: nil, retry_codes: nil, timeout: nil,
+                     jitter: nil, retry_predicate: nil
         raise ArgumentError, "jitter cannot be negative" if jitter&.negative?
 
         # Instance values are set as `nil` to determine whether values are overriden from default.
@@ -56,6 +60,7 @@ module Gapic
         @retry_codes = convert_codes retry_codes
         @timeout = timeout
         @jitter = jitter
+        @retry_predicate = retry_predicate
         start!
       end
 
@@ -90,6 +95,19 @@ module Gapic
       end
 
       ##
+      # The predicate to evaluate whether to retry on a given error. Optional.
+      #
+      # When a predicate is specified:
+      # 1. The predicate is executed first on the error.
+      # 2. If it returns nil, the decision on whether to retry is made on the basis of retry_codes.
+      # 3. Otherwise, the truthiness of the return value determines whether to retry.
+      #
+      # @return [Proc, nil]
+      def retry_predicate
+        @retry_predicate
+      end
+
+      ##
       # Returns a duplicate in a non-executing state, i.e. with the deadline
       # and current delay reset.
       #
@@ -101,7 +119,8 @@ module Gapic
                         multiplier: @multiplier,
                         retry_codes: @retry_codes,
                         timeout: @timeout,
-                        jitter: @jitter
+                        jitter: @jitter,
+                        retry_predicate: @retry_predicate
       end
 
       ##
@@ -176,6 +195,13 @@ module Gapic
       # @return [Boolean] Whether this error should be retried.
       #
       def retry_error? error
+        # Run predicate first. If it returns nil, decision is made on the basis of retry_codes.
+        # Otherwise return truthiness.
+        if @retry_predicate.respond_to? :call
+          result = @retry_predicate.call error
+          return !!result unless result.nil?
+        end
+
         (defined?(::GRPC) && error.is_a?(::GRPC::BadStatus) && retry_codes.include?(error.code)) ||
           (error.respond_to?(:response_status) &&
             retry_codes.include?(ErrorCodes.grpc_error_for(error.response_status)))
@@ -197,11 +223,12 @@ module Gapic
       #
       def apply_defaults retry_policy
         return unless retry_policy.is_a? Hash
-        @retry_codes   ||= convert_codes retry_policy[:retry_codes]
-        @initial_delay ||= retry_policy[:initial_delay]
-        @multiplier    ||= retry_policy[:multiplier]
-        @max_delay     ||= retry_policy[:max_delay]
-        @jitter        ||= retry_policy[:jitter]
+        @retry_codes     ||= convert_codes retry_policy[:retry_codes]
+        @initial_delay   ||= retry_policy[:initial_delay]
+        @multiplier      ||= retry_policy[:multiplier]
+        @max_delay       ||= retry_policy[:max_delay]
+        @jitter          ||= retry_policy[:jitter]
+        @retry_predicate ||= retry_policy[:retry_predicate]
 
         self
       end
@@ -214,13 +241,14 @@ module Gapic
           other.multiplier == multiplier &&
           other.retry_codes == retry_codes &&
           other.timeout == timeout &&
-          other.jitter == jitter
+          other.jitter == jitter &&
+          other.retry_predicate == retry_predicate
       end
       alias == eql?
 
       # @private Hash code
       def hash
-        [initial_delay, max_delay, multiplier, retry_codes, timeout, jitter].hash
+        [initial_delay, max_delay, multiplier, retry_codes, timeout, jitter, retry_predicate].hash
       end
 
       private

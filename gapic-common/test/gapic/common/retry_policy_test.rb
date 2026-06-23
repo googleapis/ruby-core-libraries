@@ -115,4 +115,42 @@ class RetryPolicyTest < Minitest::Test
     # internal state is now 10, rand is 2.0 = 12.0, capped at max_delay of 6
     assert_equal 6, delays_performed.last
   end
+
+  class CustomRetryableError < StandardError; end
+
+  def test_retry_predicate_returns_truthy
+    predicate = ->(error) { error.is_a? CustomRetryableError }
+    retry_policy = Gapic::Common::RetryPolicy.new retry_codes: [], retry_predicate: predicate, jitter: 0
+    retry_policy.start! mock_delay: true
+
+    assert retry_policy.call(CustomRetryableError.new("transient"))
+    refute retry_policy.call(StandardError.new("permanent failure"))
+  end
+
+  def test_retry_predicate_returns_false
+    predicate = ->(_error) { false }
+    retry_policy = Gapic::Common::RetryPolicy.new(
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      retry_predicate: predicate,
+      jitter: 0
+    )
+    retry_policy.start! mock_delay: true
+
+    error = GRPC::BadStatus.new GRPC::Core::StatusCodes::UNAVAILABLE, "unavailable"
+    refute retry_policy.call(error)
+  end
+
+  def test_retry_predicate_returns_nil_fallback
+    predicate = ->(_error) { nil }
+    retry_policy = Gapic::Common::RetryPolicy.new(
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE],
+      retry_predicate: predicate,
+      jitter: 0
+    )
+    retry_policy.start! mock_delay: true
+
+    retriable_error = GRPC::BadStatus.new GRPC::Core::StatusCodes::UNAVAILABLE, "unavailable"
+    assert retry_policy.call(retriable_error)
+  end
 end
+
