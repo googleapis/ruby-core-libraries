@@ -44,6 +44,7 @@ module Gapic
       # @param multiplier [Numeric] The delay scaling factor for each subsequent retry attempt.
       # @param retry_codes [Array<String|Integer>] List of retry codes.
       # @param timeout [Numeric] Timeout threshold value in seconds.
+      # @param jitter [Numeric] Random jitter added to the delay in seconds.
       # @param retry_predicate [Proc, nil] The predicate to evaluate whether to retry on a given error. Optional.
       #   If the predicate is specified, it is run first. If it returns nil, the decision on
       #   whether to retry is made on the basis of retry_codes. Otherwise, the truthiness of
