@@ -14,3 +14,5 @@ gem "minitest-rg", "~> 5.3"
 gem "pry", ">= 0.14"
 gem "redcarpet", "~> 3.0"
 gem "yard", "~> 0.9"
+
+gem "ostruct"
