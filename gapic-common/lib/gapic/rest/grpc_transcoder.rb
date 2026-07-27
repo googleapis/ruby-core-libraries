@@ -117,11 +117,157 @@ module Gapic
           field_value = extract_scalar_value! request_hash, field_path_camel, field_binding.regex
 
           if field_value
+            validate_field_binding! field_binding, field_value
             field_value = field_value.split("/").map { |segment| percent_escape segment }.join("/")
           end
 
           [field_binding.field_path, field_value]
         end
+      end
+
+      # Validates a single path or standard field binding value against traversal and parameter injection exploits.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to validate.
+      # @raise [Gapic::Common::Error] If validation fails.
+      def validate_field_binding! field_binding, field_value
+        if field_value.include?("?") || field_value.include?("#")
+          raise ::Gapic::Common::Error,
+                "Invalid value #{field_value.inspect} containing '?' or '#' " \
+                "for field #{field_binding.field_path.inspect}"
+        end
+
+        if field_binding.preserve_slashes
+          validate_path_binding! field_binding, field_value
+        else
+          validate_standard_binding! field_binding, field_value
+        end
+      end
+
+      # Validates standard parameters (*) by ensuring no path segment is a directory traversal (. or ..).
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to validate.
+      # @raise [Gapic::Common::Error] If validation fails.
+      def validate_standard_binding! field_binding, field_value
+        segments = field_value.split "/"
+        segments.each do |segment|
+          next unless segment == "." || segment == ".."
+          raise ::Gapic::Common::Error,
+                "Invalid value #{field_value.inspect} containing traversal segment #{segment.inspect} " \
+                "for field #{field_binding.field_path.inspect}"
+        end
+      end
+
+      # Validates path parameters (**) by isolating the wildcard segment and verifying it is a safe traversal,
+      # while validating that all static/standard prefix segments are traversal-free.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to validate.
+      # @raise [Gapic::Common::Error] If validation fails.
+      def validate_path_binding! field_binding, field_value
+        wildcard_value = extract_wildcard_value field_binding, field_value
+
+        if wildcard_value
+          validate_path_traversal! wildcard_value, field_binding.field_path
+
+          # Extract and validate prefix segments to block prefix traversal injection
+          prefix_length = field_value.length - wildcard_value.length
+          prefix_length -= 1 if prefix_length.positive? && field_value[prefix_length - 1] == "/"
+          prefix = field_value[0, prefix_length]
+          validate_prefix_segments! prefix, field_binding.field_path
+        else
+          validate_prefix_segments! field_value, field_binding.field_path
+        end
+      end
+
+      # Extracts the double wildcard (**) segment value using named capture metadata or legacy fallbacks.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to extract from.
+      # @return [String, Nil] The extracted wildcard segment value, or nil if not found.
+      def extract_wildcard_value field_binding, field_value
+        match_data = field_binding.regex.match field_value
+        return nil unless match_data
+
+        if match_data.names.include? "__wildcard__"
+          match_data[:__wildcard__]
+        else
+          extract_wildcard_fallback field_binding, field_value
+        end
+      end
+
+      # Fallback wildcard extraction logic for legacy precompiled client stubs.
+      # Matches the legacy pattern's optional suffix by dynamically patching the matcher regex.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to extract from.
+      # @return [String, Nil] The extracted wildcard segment value, or nil if not found.
+      def extract_wildcard_fallback field_binding, field_value
+        capturing_regex_str = field_binding.regex.source.sub "(?:/.*)?$", "(?:/(.*))?$"
+        capturing_regex = Regexp.new capturing_regex_str, field_binding.regex.options
+        fallback_match = capturing_regex.match field_value
+        wildcard_value = fallback_match[1] if fallback_match
+
+        if wildcard_value.nil? && unprefixed_wildcard?(field_binding.regex.source)
+          wildcard_value = field_value
+        end
+
+        wildcard_value
+      end
+
+      # Performs segment-counting verification on a double-wildcard path segment value
+      # to ensure it does not escape the parameter boundary.
+      #
+      # @param path [String] The wildcard path value to validate.
+      # @param field_path [String] The name of the parameter field for exception context.
+      # @raise [Gapic::Common::Error] If the traversal escapes the boundary or resolves to empty.
+      def validate_path_traversal! path, field_path
+        segments = path.split "/"
+        normalized = []
+        has_traversal = false
+        segments.each do |segment|
+          if segment == ".."
+            has_traversal = true
+            if normalized.empty?
+              raise ::Gapic::Common::Error,
+                    "Path traversal escaped parameter boundary for field #{field_path.inspect} in value #{path.inspect}"
+            end
+            normalized.pop
+          elsif segment == "."
+            has_traversal = true
+          elsif segment != ""
+            normalized.push segment
+          end
+        end
+
+        return unless normalized.empty? && has_traversal
+        raise ::Gapic::Common::Error,
+              "Path traversal resolved to empty path for field #{field_path.inspect} " \
+              "in value #{path.inspect}"
+      end
+
+      # Validates that no prefix segment contains path traversal indicators (. or ..).
+      #
+      # @param prefix [String] The prefix path string to check.
+      # @param field_path [String] The name of the parameter field for exception context.
+      # @raise [Gapic::Common::Error] If any segment is . or ..
+      def validate_prefix_segments! prefix, field_path
+        segments = prefix.split "/"
+        segments.each do |segment|
+          next unless segment == "." || segment == ".."
+          raise ::Gapic::Common::Error,
+                "Path traversal segment #{segment.inspect} in prefix #{prefix.inspect} " \
+                "is not allowed for field #{field_path.inspect}"
+        end
+      end
+
+      # Checks if the regex matches an unprefixed wildcard pattern (such as `{name=**}`).
+      #
+      # @param regex_source [String] The source regex pattern to check.
+      # @return [Boolean] True if the regex represents an unprefixed wildcard template.
+      def unprefixed_wildcard? regex_source
+        !/\A\^?(?:\(\?<[a-zA-Z_0-9.]+>\))?\.\*\)?\$?\z/.match(regex_source).nil?
       end
 
       # Percent-escapes a string.
