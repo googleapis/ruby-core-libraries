@@ -1,7 +1,6 @@
 .DS_STORE
 .bundle/
 /.yardoc
-/Gemfile.lock
 /_yardoc/
 /doc/
 /pkg/
