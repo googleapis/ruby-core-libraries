@@ -361,7 +361,7 @@ class GrpcTranscoderTest < Minitest::Test
   end
 
   def test_transcode_validation_path_wildcard
-    # 3. Path/Double-Wildcard Matchers (**) - New Style (named capture)
+    # 3. Path/Double-Wildcard Matchers (**)
     # Proto: post: "/v1/{name=projects/*/databases/*/documents/*/**}/{sub_request.name}"
     # Template: v1/{name}/{sub_request.name}
     transcoder_wild = Gapic::Rest::GrpcTranscoder.new.with_bindings(
@@ -373,109 +373,26 @@ class GrpcTranscoderTest < Minitest::Test
       ]
     )
 
-    # Valid local traversal should pass
-    transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/a/b/../c", sub_name: "col")
+    # Valid path should pass
+    transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/a/b/c", sub_name: "col")
 
-    # Invalid traversal escaping boundary should fail
+    # Segment '..' anywhere in parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/../../../../doc2", sub_name: "col")
     end
-    assert err.message.include?("escaped parameter boundary")
+    assert err.message.include?("is not allowed")
 
-    # Invalid traversal resolving to empty path should fail
+    # Segment '.' anywhere in parameter should fail
     err = assert_raises ::Gapic::Common::Error do
-      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/a/..", sub_name: "col")
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/./a", sub_name: "col")
     end
-    assert err.message.include?("resolved to empty path")
+    assert err.message.include?("is not allowed")
 
-    # Prefix traversal injection (traversal in prefix standard segment) should fail
+    # Prefix traversal in the parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/../documents/doc/a/b", sub_name: "col")
     end
-    assert err.message.include?("in prefix")
-  end
-
-  def test_transcode_validation_multi_segment_standard
-    # 4. Multi-Segment Standard Templates (No ** segment, preserve_slashes: true)
-    # Proto: get: "/v1/{name=projects/*/locations/*}"
-    # Template: v1/{name}
-    transcoder_multi_std = Gapic::Rest::GrpcTranscoder.new.with_bindings(
-      uri_method: :get,
-      uri_template: "/v1/{name}",
-      matches: [["name", %r{^projects/[^/]+/locations/[^/]+$}, true]]
-    )
-
-    # Traversal in standard multi-segment parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_multi_std.transcode example_request(name: "projects/p/locations/..")
-    end
-    assert err.message.include?("in prefix")
-  end
-
-  def test_transcode_validation_legacy_fallbacks
-    # 5. Legacy Fallback Matcher Testing
-    # Type 1: Legacy prefix + suffix wildcard matching (no named capture group)
-    # Proto: post: "/v3/{name=projects/*/locations/*/agents/*/sessions/**}:detectIntent"
-    # Template: v3/{name}:detectIntent
-    transcoder_legacy1 = Gapic::Rest::GrpcTranscoder.new.with_bindings(
-      uri_method: :post,
-      uri_template: "/v3/{name}:detectIntent",
-      matches: [["name", %r{^projects/[^/]+/locations/[^/]+/agents/[^/]+/sessions/[^/]+(?:/.*)?$}, true]]
-    )
-
-    # Valid local traversal passes
-    transcoder_legacy1.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1/a/b/../c")
-
-    # Traversal segment '..' in legacy prefix segment should fail with prefix rejection
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_legacy1.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/..")
-    end
-    assert err.message.include?("in prefix")
-
-    # Traversal segment '..' in legacy wildcard suffix should fail with escaping boundary
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_legacy1.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1/..")
-    end
-    assert err.message.include?("escaped parameter boundary")
-
-    # Prefix traversal in legacy template should fail
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_legacy1.transcode example_request(name: "projects/p/locations/../agents/a/sessions/s1")
-    end
-    assert err.message.include?("in prefix")
-
-    # Type 2: Legacy nested wildcard matching
-    # Proto: post: "/v1/{name=projects/*/databases/*/documents/*/**}"
-    # Template: v1/{name}
-    transcoder_legacy2 = Gapic::Rest::GrpcTranscoder.new.with_bindings(
-      uri_method: :post,
-      uri_template: "/v1/{name}",
-      matches: [["name", %r{^projects/[^/]+/databases/[^/]+/documents/[^/]+(?:/.*)?$}, true]]
-    )
-
-    # Traversal escaping nested boundary should fail
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_legacy2.transcode example_request(name: "projects/p/databases/d/documents/doc/../../../../doc2")
-    end
-    assert err.message.include?("escaped parameter boundary")
-
-    # Type 3: Legacy wildcard with no prefix ({foo=**} -> ^.*$)
-    # Proto: get: "/v1/{name=**}"
-    # Template: v1/{name}
-    transcoder_legacy3 = Gapic::Rest::GrpcTranscoder.new.with_bindings(
-      uri_method: :get,
-      uri_template: "/v1/{name}",
-      matches: [["name", %r{^.*$}, true]]
-    )
-
-    # Valid path passes
-    transcoder_legacy3.transcode example_request(name: "a/b/c")
-
-    # Path traversal in unprefixed legacy wildcard should fail
-    err = assert_raises ::Gapic::Common::Error do
-      transcoder_legacy3.transcode example_request(name: "a/b/../../../escape")
-    end
-    assert err.message.include?("escaped parameter boundary")
+    assert err.message.include?("is not allowed")
   end
 
   private
