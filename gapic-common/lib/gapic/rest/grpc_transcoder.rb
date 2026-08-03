@@ -159,8 +159,15 @@ module Gapic
         end
       end
 
-      # Validates path parameters (**) by isolating the wildcard segment and verifying it is a safe traversal,
-      # while validating that all static/standard prefix segments are traversal-free.
+      # Validates path parameters (**) by ensuring that no segment in the parameter value is
+      # a directory traversal segment (. or ..).
+      #
+      # Validation Mechanism:
+      # 1. Splits the full parameter value by slash (`/`) using `-1` limit to preserve all segments.
+      # 2. Checks each segment. If any segment matches `.` or `..`, it immediately raises
+      #    a `Gapic::Common::Error`, aborting the request.
+      # 3. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
+      #    by this linter and passed to the server, which handles normalization or returns 400.
       #
       # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
       # @param field_value [String] The parameter value to validate.
