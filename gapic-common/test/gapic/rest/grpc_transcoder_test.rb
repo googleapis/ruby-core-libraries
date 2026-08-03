@@ -345,13 +345,13 @@ class GrpcTranscoderTest < Minitest::Test
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: "..")
     end
-    assert err.message.include?("containing traversal segment")
+    assert err.message.include?("is not allowed")
 
     # Traversal segment '.' in standard parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: ".")
     end
-    assert err.message.include?("containing traversal segment")
+    assert err.message.include?("is not allowed")
 
     # Slashes in standard parameter should fail matching (regex rejects slashes)
     err = assert_raises ::Gapic::Common::Error do

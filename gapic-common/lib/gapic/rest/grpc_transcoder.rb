@@ -138,30 +138,11 @@ module Gapic
                 "for field #{field_binding.field_path.inspect}"
         end
 
-        if field_binding.preserve_slashes
-          validate_path_binding! field_binding, field_value
-        else
-          validate_standard_binding! field_binding, field_value
-        end
+        validate_path_binding! field_binding, field_value
       end
 
-      # Validates standard parameters (*) by ensuring no path segment is a directory traversal (. or ..).
-      #
-      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
-      # @param field_value [String] The parameter value to validate.
-      # @raise [Gapic::Common::Error] If validation fails.
-      def validate_standard_binding! field_binding, field_value
-        segments = field_value.split "/"
-        segments.each do |segment|
-          next unless segment == "." || segment == ".."
-          raise ::Gapic::Common::Error,
-                "Invalid value #{field_value.inspect} containing traversal segment #{segment.inspect} " \
-                "for field #{field_binding.field_path.inspect}"
-        end
-      end
-
-      # Validates path parameters (**) by ensuring that no segment in the parameter value is
-      # a directory traversal segment (. or ..).
+      # Validates standard (*) and path (**) parameters by ensuring that no segment in the parameter
+      # value is a directory traversal segment (. or ..).
       #
       # Validation Mechanism:
       # 1. Splits the full parameter value by slash (`/`) using `-1` limit to preserve all segments.
