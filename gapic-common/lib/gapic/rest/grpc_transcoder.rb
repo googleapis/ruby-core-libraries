@@ -125,7 +125,8 @@ module Gapic
         end
       end
 
-      # Validates a single path or standard field binding value against traversal and parameter injection exploits.
+      # Validates a user-supplied parameter value bound to a standard (*) or path (**) URI template variable
+      # to prevent directory traversal and parameter injection exploits.
       #
       # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
       # @param field_value [String] The parameter value to validate.
