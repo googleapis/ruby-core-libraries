@@ -111,6 +111,7 @@ module Gapic
       # @return [Hash{String, String}]
       #   Name to value hash of the variables for the uri template expansion.
       #   The values are percent-escaped with slashes potentially preserved.
+      # @raise [Gapic::Common::Error] If any parameter value fails path traversal or injection validation.
       def bind_uri_values! http_binding, request_hash
         http_binding.field_bindings.to_h do |field_binding|
           field_path_camel = field_binding.field_path.split(".").map { |part| camel_name_for part }.join(".")
