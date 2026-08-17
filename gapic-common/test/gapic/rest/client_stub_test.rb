@@ -173,4 +173,45 @@ class ClientStubTest < ClientStubTestBase
                                     credentials: creds
     end
   end
+
+  def test_log_request_retains_valid_utf8_under_1kib
+    recording = RecordingLogger.new
+    client_stub = ::Gapic::Rest::ClientStub.new endpoint: "google.example.com",
+                                                credentials: :dummy_credentials,
+                                                logger: recording
+    payload = '{"hello":"world"}'
+    client_stub.send :log_request, "MyMethod", "req-1", 1, payload, { "x-test" => "val" }
+
+    debug_entry = recording.entries.find { |e| e.severity == Logger::DEBUG }
+    refute_nil debug_entry
+    assert_equal payload, debug_entry.message.fields["request"]
+  end
+
+  def test_log_request_abridges_body_over_1kib
+    recording = RecordingLogger.new
+    client_stub = ::Gapic::Rest::ClientStub.new endpoint: "google.example.com",
+                                                credentials: :dummy_credentials,
+                                                logger: recording
+    payload = "A" * 1025
+    expected_prefix = ("A" * 32).unpack1 "H*"
+    client_stub.send :log_request, "MyMethod", "req-1", 1, payload, {}
+
+    debug_entry = recording.entries.find { |e| e.severity == Logger::DEBUG }
+    refute_nil debug_entry
+    assert_equal "<1025 bytes, first 32: #{expected_prefix}>", debug_entry.message.fields["request"]
+  end
+
+  def test_log_request_abridges_invalid_utf8_body
+    recording = RecordingLogger.new
+    client_stub = ::Gapic::Rest::ClientStub.new endpoint: "google.example.com",
+                                                credentials: :dummy_credentials,
+                                                logger: recording
+    payload = "\xFF\xFE\x00\x01binary".b
+    expected_prefix = payload.unpack1 "H*"
+    client_stub.send :log_request, "MyMethod", "req-1", 1, payload, {}
+
+    debug_entry = recording.entries.find { |e| e.severity == Logger::DEBUG }
+    refute_nil debug_entry
+    assert_equal "<10 bytes, first 32: #{expected_prefix}>", debug_entry.message.fields["request"]
+  end
 end
