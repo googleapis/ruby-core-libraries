@@ -287,14 +287,24 @@ module Gapic
           entry.set "requestId", request_id
           entry.message = "Sending request to #{entry.service}.#{method_name} (try #{try_number})"
         end
-        body = body.to_s
+        body_str = body.to_s
         metadata = metadata.to_h rescue {}
-        return if body.empty? && metadata.empty?
+        return if body_str.empty? && metadata.empty?
         stub_logger.debug do |entry|
           entry.set "requestId", request_id
-          entry.set "request", body
+          entry.set "request", abridge_request_body(body_str)
           entry.set "headers", metadata
           entry.message = "(request payload as JSON)"
+        end
+      end
+
+      def abridge_request_body body_str
+        utf8_body = body_str.dup.force_encoding Encoding::UTF_8
+        if body_str.bytesize > 1024 || !utf8_body.valid_encoding?
+          prefix_hex = body_str.byteslice(0, 32).unpack1 "H*"
+          "<#{body_str.bytesize} bytes, first 32: #{prefix_hex}>"
+        else
+          utf8_body
         end
       end
 
