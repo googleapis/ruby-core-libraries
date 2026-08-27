@@ -345,13 +345,25 @@ class GrpcTranscoderTest < Minitest::Test
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: "..")
     end
-    assert err.message.include?("is not allowed")
+    assert_equal "Invalid value .. for sub_request.name", err.message
 
     # Traversal segment '.' in standard parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: ".")
     end
-    assert err.message.include?("is not allowed")
+    assert_equal "Invalid value . for sub_request.name", err.message
+
+    # URL-encoded traversal segment '%2e%2e' in standard parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_std.transcode example_request(name: "p1", sub_name: "%2e%2e")
+    end
+    assert_equal "Invalid value .. for sub_request.name", err.message
+
+    # URL-encoded traversal segment '%2e' in standard parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_std.transcode example_request(name: "p1", sub_name: "%2e")
+    end
+    assert_equal "Invalid value . for sub_request.name", err.message
 
     # Slashes in standard parameter should fail matching (regex rejects slashes)
     err = assert_raises ::Gapic::Common::Error do
@@ -380,19 +392,43 @@ class GrpcTranscoderTest < Minitest::Test
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/../../../../doc2", sub_name: "col")
     end
-    assert err.message.include?("is not allowed")
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
 
     # Segment '.' anywhere in parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/./a", sub_name: "col")
     end
-    assert err.message.include?("is not allowed")
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
 
     # Prefix traversal in the parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/../documents/doc/a/b", sub_name: "col")
     end
-    assert err.message.include?("is not allowed")
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+
+    # URL-encoded segment '%2e%2e' in path parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e/doc2", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+
+    # URL-encoded segment '%2e' in path parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e/a", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+
+    # URL-encoded traversal slashes '..%2f..%2f' in path parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/..%2f..%2fescape-db", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+
+    # Mixed URL-encoded dots and slashes '%2e%2e%2f%2e%2e%2f' in path parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e%2f%2e%2e%2fescape-db", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
   end
 
   private

@@ -146,22 +146,29 @@ module Gapic
       # value is a directory traversal segment (. or ..).
       #
       # Validation Mechanism:
-      # 1. Splits the full parameter value by slash (`/`) using `-1` limit to preserve all segments.
-      # 2. Checks each segment. If any segment matches `.` or `..`, it immediately raises
+      # 1. URL-decodes the parameter value to ensure all encoded dot (`%2e` / `%2E`)
+      #    and slash (`%2f` / `%2F`) segments are expanded.
+      # 2. Splits the decoded parameter value by slash (`/`) using `-1` limit to preserve all segments.
+      # 3. Checks each segment. If any segment matches `.` or `..`, it immediately raises
       #    a `Gapic::Common::Error`, aborting the request.
-      # 3. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
+      # 4. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
       #    by this linter and passed to the server, which handles normalization or returns 400.
       #
       # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
       # @param field_value [String] The parameter value to validate.
       # @raise [Gapic::Common::Error] If validation fails.
       def validate_path_binding! field_binding, field_value
-        segments = field_value.split("/", -1)
+        unescaped_value = CGI.unescape field_value
+        segments = unescaped_value.split("/", -1)
         segments.each do |segment|
           next unless segment == "." || segment == ".."
-          raise ::Gapic::Common::Error,
-                "Path traversal segment #{segment.inspect} is not allowed " \
-                "for field #{field_binding.field_path.inspect} in value #{field_value.inspect}"
+          if field_binding.preserve_slashes
+            raise ::Gapic::Common::Error,
+                  "Value for #{field_binding.field_path} must not contain segments that are exactly . or .."
+          else
+            raise ::Gapic::Common::Error,
+                  "Invalid value #{segment} for #{field_binding.field_path}"
+          end
         end
       end
 
