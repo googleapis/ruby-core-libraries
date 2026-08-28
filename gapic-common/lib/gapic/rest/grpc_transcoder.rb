@@ -133,12 +133,6 @@ module Gapic
       # @param field_value [String] The parameter value to validate.
       # @raise [Gapic::Common::Error] If validation fails.
       def validate_field_binding! field_binding, field_value
-        if field_value.include?("?") || field_value.include?("#")
-          raise ::Gapic::Common::Error,
-                "Invalid value #{field_value.inspect} containing '?' or '#' " \
-                "for field #{field_binding.field_path.inspect}"
-        end
-
         validate_path_binding! field_binding, field_value
       end
 

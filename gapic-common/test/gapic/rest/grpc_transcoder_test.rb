@@ -312,17 +312,15 @@ class GrpcTranscoderTest < Minitest::Test
     # Valid payload should pass
     transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1")
 
-    # Payload with query injection should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # Payload with query injection should succeed and escape the ? character
+    _uri_method, uri, _query_params, _body =
       transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1?key=val")
-    end
-    assert err.message.include?("containing '?' or '#'")
+    assert_equal "/v3/projects/p/locations/l/agents/a/sessions/s1%3Fkey%3Dval:detectIntent", uri
 
-    # Payload with fragment injection should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # Payload with fragment injection should succeed and escape the # character
+    _uri_method, uri, _query_params, _body =
       transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1#frag")
-    end
-    assert err.message.include?("containing '?' or '#'")
+    assert_equal "/v3/projects/p/locations/l/agents/a/sessions/s1%23frag:detectIntent", uri
   end
 
   def test_transcode_validation_standard_wildcard
