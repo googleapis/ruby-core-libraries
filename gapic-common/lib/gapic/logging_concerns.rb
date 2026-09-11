@@ -200,12 +200,14 @@ module Gapic
           input
         when Class
           mod = input.name.split("::")[..-2].inject(Object) { |m, n| m.const_get n }
-          if mod.const_defined? "Service"
-            mod.const_get("Service").service_name
+          # inherit: false so a top-level ::Service is not mistaken for the
+          # generated gRPC Service sibling that REST stubs do not define.
+          if mod.const_defined? "Service", false
+            mod.const_get("Service", false).service_name
           else
             name_segments = input.name.split("::")[..-3]
             mod = name_segments.inject(Object) { |m, n| m.const_get n }
-            name_segments.join "." if mod.const_defined? "Rest"
+            name_segments.join "." if mod.const_defined? "Rest", false
           end
         end
       end
