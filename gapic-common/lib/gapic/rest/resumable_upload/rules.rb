@@ -28,6 +28,69 @@ module Gapic
       # Pure functional transition engine for the Resumable Upload Protocol.
       # Contains zero side-effects and zero persistent state.
       #
+      # ### Model
+      #
+      # {Rules.decide} is the protocol. It is a total function of `[state.status, shape_of(event)]` returning a
+      # {Decision} that carries the next {State} and the instructions for the Driver to execute. Three
+      # vocabularies define it, each published as a frozen constant:
+      #
+      # * {STATUSES} - protocol lifecycle statuses a {State} may hold.
+      # * {SHAPES} - canonical event shapes that {Rules.shape_of} reduces raw events to.
+      # * {RECIPES} - transition handlers that {Rules.decide} may select.
+      #
+      # Every router arm maps one (status, shape) pair to exactly one recipe, and every recipe returns
+      # `[next_state, instructions]`. Adding a protocol behaviour means adding a shape, a recipe and an arm.
+      # It never means adding branching to the Driver.
+      #
+      # ### State transition graph
+      #
+      # ```mermaid
+      # stateDiagram-v2
+      #     [*] --> initializing
+      #     initializing --> starting : start_upload
+      #     initializing --> recovery : resume_upload
+      #     starting --> transmission_reading : response_active
+      #     transmission_reading --> transmission_sending : chunk_read_full
+      #     transmission_sending --> transmission_reading : response_active
+      #     transmission_reading --> finalizing_sending_upload : chunk_read_eof_with_data
+      #     transmission_reading --> finalizing_sending_finalize : chunk_read_eof_empty
+      #     finalizing_sending_upload --> success : response_final
+      #     finalizing_sending_finalize --> success : response_final
+      #     transmission_sending --> recovery : response_cat2 / connection_failed / timeout
+      #     finalizing_sending_upload --> recovery : response_cat2 / connection_failed / timeout
+      #     finalizing_sending_finalize --> recovery : response_cat2 / connection_failed / timeout
+      #     recovery --> recovery : response_cat2
+      #     recovery --> transmission_reading : response_active
+      #     recovery --> success : response_final
+      #     starting --> error : response_cat2 / response_fatal_bad_response / request_*
+      #     recovery --> error : request_*
+      #     transmission_sending --> rejected : response_rejected
+      #     recovery --> rejected : response_rejected
+      #     cancelling --> cancelled : response_cancelled
+      #     success --> [*]
+      #     rejected --> [*]
+      #     cancelled --> [*]
+      #     error --> [*]
+      # ```
+      #
+      # Two families of edge are omitted above to keep the graph readable: every non-terminal status moves to
+      # `cancelling` on `:user_cancel` and to `error` on `:global_deadline_exceeded`.
+      #
+      # ### Router ordering
+      #
+      # Arms are evaluated top to bottom, so their order encodes precedence and is load-bearing:
+      #
+      # * The catch-all `[_, :global_deadline_exceeded]` and `[_, :user_cancel]` arms sit above the rejected,
+      #   bad-response and request-error arms. Moving them below would let a late failure response win over an
+      #   expired deadline in precisely the states where the deadline matters.
+      # * `[:starting, :response_cat2]` fails instead of recovering, unlike the same shape during transmission
+      #   and finalizing. There is no upload to recover to until initiation yields an upload URL.
+      # * `recovery` re-queries on `:response_cat2` with no attempt cap. Termination is guaranteed only by the
+      #   global deadline the Driver enforces, not by anything in this module.
+      #
+      # See `design/implementation-guide.md` section 4 for the transition specification and section 6.1 for the
+      # error category taxonomy this module implements.
+      #
       # rubocop:disable Metrics/ModuleLength
       module Rules
         ##
@@ -36,15 +99,39 @@ module Gapic
         # @return [Integer]
         DEFAULT_CHUNK_SIZE = 8_388_608 # 8 MB
 
+        # Failures are classified into three categories, which the rest of this module is written in terms of:
+        #
+        # * **Category 1 (transient transport)** - connection resets, DNS failures, load shedding. Handled
+        #   entirely inside the Driver by `Gapic::Common::RetryPolicy`; Core never sees them. Only their
+        #   exhaustion reaches this module, as `:request_retries_exhausted`.
+        # * **Category 2 (recoverable protocol)** - the client offset may be misaligned with the server, or a
+        #   proxy stripped the protocol headers. Resolved by querying the server for its acknowledged offset
+        #   and realigning, never by blindly retransmitting. Shape: `:response_cat2`.
+        # * **Category 3 (terminal)** - structurally invalid, unauthorized, rejected, or out of budget.
+        #   Resolved by transitioning to `:error` or `:rejected` and emitting `Instruction::TerminateFailure`.
+        #
+        # See `design/implementation-guide.md` section 6.1 for the full classification.
+
         ##
         # @private
         # HTTP status codes eligible for Category 2 (recovery) handling.
+        #
+        # Descriptive rather than load-bearing: {Rules.classify_http_response} routes any non-fatal status with a
+        # missing or empty `X-Goog-Upload-Status` to `:response_cat2`, so this list does not gate the decision.
+        # It records the codes the upload backend is expected to produce in that situation, and is asserted against
+        # {Rules.classify_http_response} by the classification tests.
+        #
         # @return [Array<Integer>]
         CAT2_STATUS_CODES = [400, 408, 409, 412, 416, 429, 499].freeze
 
         ##
         # @private
-        # HTTP status codes that are immediately fatal and non-retriable.
+        # HTTP status codes that are immediately fatal and non-retriable (Category 3).
+        #
+        # Unlike {CAT2_STATUS_CODES} this list is load-bearing: {Rules.classify_http_response} consults it to decide
+        # between `:response_fatal_bad_response` and `:response_cat2` when the upload status header is absent,
+        # and {RetryPolicies::START_PREDICATE} consults it to refuse retries outright.
+        #
         # @return [Array<Integer>]
         FATAL_STATUS_CODES = [401, 403, 404, 405, 410, 413, 415].freeze
 
@@ -66,6 +153,76 @@ module Gapic
           error:                       "in error state",
           rejected:                    "in rejected upload state"
         }.freeze
+
+        ##
+        # @private
+        # Canonical list of protocol lifecycle statuses a {State} may hold. Derived from the keys of
+        # {STATE_DESCRIPTIONS} so the two cannot drift.
+        #
+        # * `:initializing` - nothing dispatched yet; awaits `:start_upload` or `:resume_upload`.
+        # * `:starting` - initiation request in flight; no upload URL yet.
+        # * `:transmission_reading` - filling the buffer from the stream.
+        # * `:transmission_sending` - a non-final chunk is in flight.
+        # * `:finalizing_sending_upload` - the last chunk is in flight, combined with the finalize command.
+        # * `:finalizing_sending_finalize` - a standalone finalize is in flight; all data bytes were already sent.
+        # * `:recovery` - offset query in flight, either after a recoverable failure or as the first step of a
+        #   resume.
+        # * `:cancelling` - cancel command in flight. Not reachable from the public API.
+        # * `:success` - terminal; the upload finalized.
+        # * `:cancelled` - terminal; the server acknowledged cancellation.
+        # * `:rejected` - terminal; the server refused the upload.
+        # * `:error` - terminal for this run; `last_error` holds the exception.
+        #
+        # `:success`, `:cancelled` and `:rejected` are finalized and yield no {ResumeHandle}. `:error` ends the
+        # run but may still be resumable from a fresh session; see {Rules.resume_handle_from}.
+        #
+        # @return [Array<Symbol>]
+        STATUSES = STATE_DESCRIPTIONS.keys.freeze
+
+        ##
+        # @private
+        # Canonical list of event shapes produced by {Rules.shape_of} and matched by {Rules.decide},
+        # grouped by the event family each is reduced from.
+        #
+        # Lifecycle signals, one shape each from {Event::StartUpload}, {Event::ResumeUpload}, {Event::Cancel}
+        # and {Event::GlobalDeadlineExceeded}: `:start_upload`, `:resume_upload`, `:user_cancel`,
+        # `:global_deadline_exceeded`.
+        #
+        # Stream reads, from {Event::ChunkRead} split by EOF and buffer occupancy. The three-way split is what
+        # lets a zero-length tail finalize without sending an empty chunk: `:chunk_read_full`,
+        # `:chunk_read_eof_with_data`, `:chunk_read_eof_empty`.
+        #
+        # Request failures, from {Event::RequestFailed} split by `kind`: `:request_timeout`,
+        # `:request_retries_exhausted`, `:request_connection_failed`, `:request_failed_unknown`.
+        #
+        # HTTP responses, from {Event::HttpResponse} split by `X-Goog-Upload-Status` and HTTP status:
+        # `:response_active`, `:response_final`, `:response_cancelled`, `:response_rejected`, `:response_cat2`,
+        # `:response_fatal_bad_response`.
+        #
+        # `:unknown` is a live shape rather than an error sentinel. It is what {Rules.shape_of} returns for anything
+        # it does not recognise, and it routes to {Rules.fail_with_unmatched_transition}.
+        #
+        # @return [Array<Symbol>]
+        SHAPES = [
+          :start_upload,
+          :resume_upload,
+          :user_cancel,
+          :global_deadline_exceeded,
+          :chunk_read_full,
+          :chunk_read_eof_with_data,
+          :chunk_read_eof_empty,
+          :request_timeout,
+          :request_retries_exhausted,
+          :request_connection_failed,
+          :request_failed_unknown,
+          :response_active,
+          :response_final,
+          :response_cancelled,
+          :response_rejected,
+          :response_cat2,
+          :response_fatal_bad_response,
+          :unknown
+        ].freeze
 
         ##
         # @private
@@ -169,6 +326,7 @@ module Gapic
         # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
         def self.decide state, event, config
           shape = shape_of event
+          raise ArgumentError, "unknown shape: #{shape}" unless SHAPES.include? shape
 
           recipe = case [state.status, shape]
                    in [:initializing, :start_upload]
@@ -194,12 +352,16 @@ module Gapic
                      :complete_upload_finalized
                    in [:recovery, :response_active]
                      :realign_from_recovery
+                   # Re-query with no attempt cap. Only the Driver's global deadline guarantees termination.
                    in [:recovery, :response_cat2]
                      :retry_recovery
                    in [:cancelling, :response_cancelled]
                      :complete_cancellation
                    in [:cancelling, :user_cancel]
                      :ignore_duplicate_cancel
+                   # Order matters from here down. These two catch-alls must stay above the failure arms below,
+                   # so that an expired deadline or a cancellation wins over a late failure response arriving
+                   # in the same states.
                    in [_, :global_deadline_exceeded]
                      :fail_with_deadline_exceeded
                    in [_, :user_cancel]
@@ -207,6 +369,9 @@ module Gapic
                    in [:starting | :transmission_sending | :finalizing_sending_upload |
                        :finalizing_sending_finalize | :recovery | :cancelling, :response_rejected]
                      :fail_with_rejected
+                   # `:starting` fails on `:response_cat2` rather than entering recovery, unlike the
+                   # transmission and finalizing states above: there is no upload to recover to until
+                   # initiation has returned an upload URL.
                    in [:starting | :cancelling, :response_cat2] |
                       [:starting | :transmission_sending | :finalizing_sending_upload |
                        :finalizing_sending_finalize | :recovery | :cancelling, :response_fatal_bad_response]

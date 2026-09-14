@@ -196,6 +196,70 @@ class RulesClassificationTest < Minitest::Test
     assert_equal :unknown, Rules.shape_of("unrecognized_event")
   end
 
+  ##
+  # One event per shape Rules can produce. Used to check SHAPES in both directions, so that a new shape must
+  # be added to the constant and a retired shape must be removed from it.
+  #
+  def shape_corpus
+    active = { "X-Goog-Upload-Status" => "active" }
+    final = { "X-Goog-Upload-Status" => "final" }
+    cancelled = { "X-Goog-Upload-Status" => "cancelled" }
+    {
+      start_upload:                Event::StartUpload.new,
+      resume_upload:               Event::ResumeUpload.new,
+      user_cancel:                 Event::Cancel.new,
+      global_deadline_exceeded:    Event::GlobalDeadlineExceeded.new,
+      chunk_read_full:             Event::ChunkRead.new(bytes_buffered: 4096, eof: false),
+      chunk_read_eof_with_data:    Event::ChunkRead.new(bytes_buffered: 1024, eof: true),
+      chunk_read_eof_empty:        Event::ChunkRead.new(bytes_buffered: 0, eof: true),
+      request_timeout:             Event::RequestFailed.new(kind: :timeout),
+      request_retries_exhausted:   Event::RequestFailed.new(kind: :retries_exhausted),
+      request_connection_failed:   Event::RequestFailed.new(kind: :connection_failed),
+      request_failed_unknown:      Event::RequestFailed.new(kind: :something_else),
+      response_active:             Event::HttpResponse.new(status: 200, headers: active),
+      response_final:              Event::HttpResponse.new(status: 200, headers: final),
+      response_cancelled:          Event::HttpResponse.new(status: 200, headers: cancelled),
+      response_rejected:           Event::HttpResponse.new(status: 400, headers: final),
+      response_cat2:               Event::HttpResponse.new(status: 200, headers: {}),
+      response_fatal_bad_response: Event::HttpResponse.new(status: 401, headers: {}),
+      unknown:                     Object.new
+    }
+  end
+
+  def test_shapes_constant_is_exhaustive_and_minimal
+    corpus = shape_corpus
+
+    corpus.each do |expected_shape, event|
+      assert_equal expected_shape, Rules.shape_of(event),
+                   "Corpus event for #{expected_shape} no longer classifies as that shape"
+    end
+
+    assert_empty Rules::SHAPES - corpus.keys,
+                 "SHAPES members that no corpus event produces (phantom or untested shapes)"
+    assert_empty corpus.keys - Rules::SHAPES,
+                 "shape_of produces shapes that are missing from SHAPES"
+    assert_predicate Rules::SHAPES, :frozen?
+  end
+
+  def test_statuses_tracks_state_descriptions
+    assert_equal Rules::STATE_DESCRIPTIONS.keys, Rules::STATUSES
+    assert_equal Rules::STATUSES.uniq, Rules::STATUSES
+    assert_predicate Rules::STATUSES, :frozen?
+  end
+
+  def test_decide_rejects_a_shape_outside_the_vocabulary
+    state = State.new
+    config = CompleteUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("data")
+
+    error = Rules.stub :shape_of, :not_a_real_shape do
+      assert_raises ArgumentError do
+        Rules.decide state, Event::StartUpload.new, config
+      end
+    end
+
+    assert_match(/unknown shape: not_a_real_shape/, error.message)
+  end
+
   def test_resolve_chunk_size_with_nil_or_non_positive_granularity
     # nil granularity
     assert_equal 1024, Rules.resolve_chunk_size(1024, nil)
@@ -215,7 +279,7 @@ class RulesClassificationTest < Minitest::Test
     assert_equal 1024, Rules.resolve_chunk_size(1024, 256)
     assert_equal 1_048_576, Rules.resolve_chunk_size(1_048_576, 262_144)
 
-    # Default chunk size (8_388_608) evenly divides 256 KB standard Scotty granularity
+    # Default chunk size (8_388_608) evenly divides the standard 256 KB backend granularity
     assert_equal 8_388_608, Rules.resolve_chunk_size(nil, 262_144)
     assert_equal 8_388_608, Rules.resolve_chunk_size(nil, 524_288)
   end

@@ -340,8 +340,8 @@ module Gapic
       end
 
       ##
-      # Raised when Scotty backend explicitly rejects the upload session
-      # (returns non-2xx with X-Goog-Upload-Status: final).
+      # Raised when the resumable upload backend explicitly rejects the
+      # upload session (returns non-2xx with X-Goog-Upload-Status: final).
       #
       # @!attribute [r] response_body
       #   @return [String, nil] Response body from backend

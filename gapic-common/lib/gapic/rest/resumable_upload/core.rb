@@ -25,6 +25,10 @@ module Gapic
       # State machine container holding the immutable State snapshot.
       # Contains zero protocol branching logic and zero side-effects.
       #
+      # The middle tier of the three-tier design: `Driver` executes side effects, {Rules} decides transitions,
+      # and Core holds the {State} between the two. See {Rules} for the protocol narrative and state graph, and
+      # `design/implementation-guide.md` section 1 for the tier boundaries.
+      #
       class Core
         # @private
         # @return [State] Current immutable state snapshot

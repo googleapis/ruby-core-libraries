@@ -120,7 +120,7 @@ module Gapic
       # Immutable configuration for resuming an existing upload session.
       #
       # @!attribute [r] upload_url
-      #   @return [String] Session upload URL returned by Scotty backend
+      #   @return [String] Session upload URL returned by the upload backend
       # @!attribute [r] chunk_size
       #   @return [Integer] Explicit chunk size in bytes (must be a positive integer)
       # @!attribute [r] stream
@@ -286,9 +286,9 @@ module Gapic
       # Immutable state snapshot representing the current protocol progression.
       #
       # @!attribute [r] status
-      #   @return [Symbol] Protocol lifecycle status symbol
+      #   @return [Symbol] Protocol lifecycle status, one of {Rules::STATUSES}
       # @!attribute [r] upload_url
-      #   @return [String, nil] Session upload URL returned by Scotty backend
+      #   @return [String, nil] Session upload URL returned by the upload backend
       # @!attribute [r] offset
       #   @return [Integer] Contiguous bytes acknowledged by server
       # @!attribute [r] chunk_size
@@ -313,7 +313,7 @@ module Gapic
         # @private
         # Initializes a protocol state snapshot.
         #
-        # @param status [Symbol] Protocol lifecycle status symbol
+        # @param status [Symbol] Protocol lifecycle status, one of {Rules::STATUSES}
         # @param upload_url [String, nil] Session upload URL
         # @param offset [Integer] Contiguous bytes acknowledged by server
         # @param chunk_size [Integer] Resolved effective chunk size in bytes

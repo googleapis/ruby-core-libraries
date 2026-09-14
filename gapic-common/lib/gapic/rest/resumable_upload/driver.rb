@@ -34,6 +34,12 @@ module Gapic
       # Coordinates HTTP network operations, stream buffering, monotonic deadlines,
       # and delegates state transitions to Core.
       #
+      # The outer tier of the three-tier design. All side effects live here; all protocol decisions live in
+      # {Rules}, which carries the state graph and the error category taxonomy. Category 1 transient retries
+      # are absorbed here by `Gapic::Common::RetryPolicy` and never reach {Core}. See
+      # `design/implementation-guide.md` section 2.5 for the buffer and stream position invariants, and
+      # section 6.3 for the deadline model.
+      #
       # rubocop:disable Metrics/ClassLength
       class Driver
         include Gapic::LoggingConcerns

@@ -1,4 +1,4 @@
-# Scotty Resumable Upload Protocol (RUP) Implementation Guide
+# Resumable Upload Protocol (RUP) Implementation Guide
 
 ## 1. System Architecture
 
@@ -13,7 +13,7 @@ graph TD
         Core -->|state, event| Rules[Rules <br/> Pure Decision Function]
         Rules -->|next_state, instructions| Core
     end
-    Driver -->|RetryPolicy / Faraday| Server[Scotty / GCS Backend]
+    Driver -->|RetryPolicy / Faraday| Server[Upload Backend / GCS]
     Driver -->|IO#read| Stream[Local Stream]
 ```
 
@@ -137,7 +137,7 @@ module Gapic
   module Rest
     module ResumableUpload
       ResumeUploadConfig = Data.define(
-        :upload_url,                       # [String] Upload session URL returned by Scotty backend
+        :upload_url,                       # [String] Upload session URL returned by the upload backend
         :chunk_size,                       # [Integer] Chunk size in bytes (> 0)
         :stream,                           # [IO] Binary input stream to upload
         :upload_size,                      # [Integer, nil] Total upload bytes if known upfront
@@ -163,7 +163,7 @@ module Gapic
         :status,             # [Symbol] :initializing, :starting, :transmission_reading, :transmission_sending,
                              #          :finalizing_sending_upload, :finalizing_sending_finalize,
                              #          :recovery, :cancelling, :cancelled, :success, :error, :rejected
-        :upload_url,         # [String, nil] Session upload URL returned by Scotty backend
+        :upload_url,         # [String, nil] Session upload URL returned by the upload backend
         :offset,             # [Integer] Contiguous bytes confirmed by server (protocol_state_offset)
         :chunk_size,         # [Integer] Resolved effective chunk size
         :chunk_granularity,  # [Integer, nil] Alignment modulus returned by server
@@ -226,7 +226,7 @@ end
 ### 2.5 Driver Buffer Invariants & Stream Position Model
 
 The Driver coordinates stream reading and in-memory buffering using four explicit offset markers:
-*   `server_offset`: Contiguous byte count acknowledged by Scotty (extracted from `X-Goog-Upload-Size-Received`).
+*   `server_offset`: Contiguous byte count acknowledged by the server (extracted from `X-Goog-Upload-Size-Received`).
 *   `protocol_state_offset`: Byte offset maintained in `State.offset`.
 *   `buffer_start_offset`: Absolute stream offset corresponding to the first byte in the Driver's `@buffer`.
 *   `buffer_end_offset`: `buffer_start_offset + @buffer.bytesize`.
@@ -469,7 +469,7 @@ The implementation distinguishes three categories of network and protocol-level 
     2.  **Missing or Empty `X-Goog-Upload-Status` Header**: Any response lacking `X-Goog-Upload-Status` (or empty) whose HTTP status is **not** in `FATAL_STATUS_CODES` (Section 6.1.3). This includes HTTP 200, 5xx server/gateway errors (`500`, `502`, `503`, `504`), and recoverable client errors (`400`, `408`, `409`, `412`, `416`, `429`, `499`).
     3.  **Unretried Data Plane Connection Drops or Request Timeouts**: `Event::RequestFailed(kind: :connection_failed)` or `Event::RequestFailed(kind: :timeout)` (`:request_connection_failed`, `:request_timeout`) occurring during `Transmission` or `Finalizing`.
 *   **Missing Header Handling & Retry Policy Contract**:
-    *   *Why Headers Go Missing*: Intermediate proxies, reverse-proxies, or Google Front End (GFE) edge proxies can strip Scotty response headers or return raw HTML/text error pages on failure.
+    *   *Why Headers Go Missing*: Intermediate proxies, reverse-proxies, or Google Front End (GFE) edge proxies can strip the protocol response headers or return raw HTML/text error pages on failure.
     *   *Session Initiation (`start`)*: Missing `X-Goog-Upload-Status` is treated as **retriable** by `start_retry_policy` (retry predicate returns `true`) across **any response code, including 200 OK**. Driver retries transparently to smooth over transient gateway noise. If retries exhaust, `Starting` transitions to `:error` via `fail_with_request_error` or `fail_with_bad_response` (cannot recover a session before an upload URL is obtained).
     *   *Session Control (`query`, `cancel`)*: `control_plane_retry_policy` does **not** treat missing status headers as retriable, returning the completed `Event::HttpResponse` immediately to `Core` so it can manage protocol recovery or fail fast.
     *   *Data Plane (`upload`, `upload, finalize`, standalone `finalize`)*: Missing `X-Goog-Upload-Status` is treated as **unretriable** by `data_plane_retry_policy` (retry predicate returns `false`). The Driver immediately returns `Event::HttpResponse` to `Core` so it classifies as `:response_cat2` and initiates Category 2 `Recovery` via `Instruction::SendQuery` rather than blindly re-transmitting data.
@@ -478,7 +478,7 @@ The implementation distinguishes three categories of network and protocol-level 
 #### 6.1.3 Category 3: Terminal Failures & Fatal Status Codes
 *   **Definition**: Irrecoverable errors where either the request is structurally invalid, unauthorized, transport retry limits are exhausted, unseekable rewind is needed, or the server has explicitly aborted/rejected the session.
 *   **Canonical Fatal Status Codes (`FATAL_STATUS_CODES`)**:
-    The following status codes indicate structural or authentication failures that cannot be resolved by querying the Scotty backend:
+    The following status codes indicate structural or authentication failures that cannot be resolved by querying the upload backend:
     *   `401 Unauthorized`: Authentication token is expired, invalid, or missing.
     *   `403 Forbidden`: Caller lacks required IAM permissions for the upload destination.
     *   `404 Not Found`: Session upload URL does not exist or has expired.
