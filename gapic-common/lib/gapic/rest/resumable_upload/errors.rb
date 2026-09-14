@@ -379,7 +379,9 @@ module Gapic
       end
 
       ##
+      # @private
       # Raised when the upload session is cancelled.
+      # Cancellation is not public yet.
       #
       class UploadCancelledError < Gapic::Common::Error
         ##
@@ -525,9 +527,8 @@ module Gapic
       end
 
       ##
-      # Raised when an operation violates the Session lifecycle rules (e.g. attempting to
-      # start an already-bound session, resuming an unbound session without a target upload,
-      # re-binding to a different upload, or concurrent run invocations).
+      # Raised when an operation violates the Session lifecycle rules
+      # (e.g. calling a `start` method more than once).
       #
       class SessionStateError < Gapic::Common::Error
       end

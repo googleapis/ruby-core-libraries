@@ -29,6 +29,7 @@ module Gapic
   module Rest
     module ResumableUpload
       ##
+      # @private
       # Synchronous execution engine for the Resumable Upload Protocol.
       # Coordinates HTTP network operations, stream buffering, monotonic deadlines,
       # and delegates state transitions to Core.
@@ -53,11 +54,8 @@ module Gapic
         # @return [Core]
         attr_reader :core
 
-        # @private
-        # @return [String, nil] Current upload session ID
-        attr_reader :upload_id
-
         ##
+        # @private
         # Returns a {ResumeHandle} representing the current upload session parameters.
         # Reading this property mid-run provides a best-effort snapshot of the current session state.
         # Completed uploads (`:success`), rejected uploads (`:rejected`), and cancelled uploads
@@ -69,6 +67,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Returns the raw upload session URL from protocol state, regardless of lifecycle status.
         #
         # @return [String, nil] Session upload URL if established, or nil
@@ -77,10 +76,11 @@ module Gapic
         end
 
         ##
+        # @private
         # Initializes a new Resumable Upload Driver.
         #
         # @param client_stub [Gapic::Rest::ClientStub] Underlying REST client stub
-        # @param config [CompleteUploadConfig] Configuration for this upload session
+        # @param config [CompleteUploadConfig, ResumeUploadConfig] Configuration for this upload session
         # @param core [Core, nil] Optional Core state machine (defaults to new Core with config)
         # @param logger [Logger, nil] Optional logger override
         def initialize client_stub:, config:, core: nil, logger: nil
@@ -106,6 +106,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Default retry policy for session initiation requests (start).
         #
         # @return [Gapic::Common::RetryPolicy]
@@ -114,6 +115,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Default retry policy for control plane requests (query, cancel).
         #
         # @return [Gapic::Common::RetryPolicy]
@@ -122,6 +124,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Default retry policy for data plane requests (upload, finalize).
         #
         # @return [Gapic::Common::RetryPolicy]
@@ -130,9 +133,10 @@ module Gapic
         end
 
         ##
+        # @private
         # Executes event loop until terminal state.
         # Establishes a guaranteed monotonic deadline at the start of execution
-        # using {#resolve_timeout} so the upload cannot stall indefinitely.
+        # so the upload cannot stall indefinitely.
         #
         # @return [String, Object] Final response body
         def run

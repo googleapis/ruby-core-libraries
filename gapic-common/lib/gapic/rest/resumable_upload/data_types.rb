@@ -19,6 +19,7 @@ module Gapic
     # rubocop:disable Metrics/ModuleLength
     module ResumableUpload
       ##
+      # @private
       # Immutable configuration for initiating and executing a resumable upload session.
       #
       # @!attribute [r] initial_url
@@ -69,6 +70,7 @@ module Gapic
         :on_progress
       ) do
         ##
+        # @private
         # Initializes a new upload configuration.
         #
         # @param initial_url [String] Initial endpoint URI for session initiation
@@ -114,6 +116,7 @@ module Gapic
       end
 
       ##
+      # @private
       # Immutable configuration for resuming an existing upload session.
       #
       # @!attribute [r] upload_url
@@ -156,6 +159,7 @@ module Gapic
         :on_progress
       ) do
         ##
+        # @private
         # Initializes a new upload resume configuration.
         #
         # @param upload_url [String] Session upload URL
@@ -203,6 +207,10 @@ module Gapic
 
       ##
       # Immutable progress snapshot passed to the `on_progress` callback.
+      #
+      # The `on_progress` callback runs synchronously on the same thread as the upload protocol
+      # and must not block. Any exception raised inside the callback aborts the upload session
+      # and propagates out of {Session#start} or {Session#resume}.
       #
       # @!attribute [r] phase
       #   @return [Symbol] Current upload phase, one of {Progress::PHASES}
@@ -316,7 +324,7 @@ module Gapic
         def initialize status: :initializing,
                        upload_url: nil,
                        offset: 0,
-                       chunk_size: 8_388_608,
+                       chunk_size: Rules::DEFAULT_CHUNK_SIZE,
                        chunk_granularity: nil,
                        in_flight_length: 0,
                        last_error: nil

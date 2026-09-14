@@ -31,6 +31,42 @@ module Gapic
     ##
     # Resumable Upload Protocol implementation for REST transport.
     #
+    # {Session} is the primary public entry point for initiating and resuming uploads.
+    # It manages session initiation, chunked streaming, automatic retries, progress
+    # callbacks via {Progress}, and cross-session resumption via {ResumeHandle}.
+    #
+    # ### Error Types
+    # * {RequestFailedError} - Transport connection failure, timeout, or retries exhausted (includes {HasResumeHandle}).
+    # * {DeadlineExceededError} - Global upload timeout exceeded (includes {HasResumeHandle}).
+    # * {BadResponseError} - Unexpected or malformed HTTP response (includes {HasResumeHandle}).
+    # * {UnseekableStreamError} - Stream rewinding required on an unseekable stream (includes {HasResumeHandle}).
+    # * {StreamMismatchError} - Stream content or length does not match resumed upload (includes {HasResumeHandle}).
+    # * {InvalidTransitionError} - Unmatched event for the current protocol state (includes {HasResumeHandle}).
+    # * {UploadRejectedError} - Server explicitly rejected the upload session (final).
+    # * {SessionStateError} - Session lifecycle rule violation, e.g., calling `#start` twice (final).
+    #
+    # @example Initiating an upload, rescuing an error, and resuming from a fresh session
+    #   session = Gapic::Rest::ResumableUpload::Session.new(
+    #     client_stub: client_stub,
+    #     stream: stream,
+    #     initial_url: "https://example.googleapis.com/resumable/upload/v1/example/upload:new"
+    #   )
+    #
+    #   begin
+    #     response = session.start
+    #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
+    #     handle = e.resume_handle
+    #     raise unless handle
+    #
+    #     stream.rewind
+    #     resumed_session = Gapic::Rest::ResumableUpload::Session.new(
+    #       client_stub: client_stub,
+    #       stream: stream,
+    #       initial_url: session.initial_url
+    #     )
+    #     response = resumed_session.resume resume_handle: handle
+    #   end
+    #
     module ResumableUpload
     end
   end

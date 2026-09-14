@@ -40,7 +40,11 @@ module Gapic
         # @return [Gapic::Rest::ClientStub] Underlying REST client stub
         attr_reader :client_stub
 
-        # @return [IO] Binary input stream to upload
+        ##
+        # Binary input stream to upload. The stream is assumed to be positioned at byte 0
+        # (it is not rewound prior to reading) and is not closed after use.
+        #
+        # @return [IO]
         attr_reader :stream
 
         # @return [String] Initial endpoint URI for session initiation
@@ -55,13 +59,20 @@ module Gapic
         # @return [Integer, nil] Total upload bytes if known upfront
         attr_reader :upload_size
 
-        # @return [Integer, nil] Explicit chunk size in bytes
+        ##
+        # Explicit chunk size in bytes. If `nil`, the protocol implementation assigns a default value.
+        # The effective chunk size may be adjusted if the server specifies a required data granularity.
+        #
+        # @return [Integer, nil]
         attr_reader :chunk_size
 
         # @return [String, nil] MIME type of uploaded media
         attr_reader :content_type
 
-        # @return [Numeric, nil] Total upload timeout in seconds
+        ##
+        # Total upload timeout in seconds. If `nil`, the protocol implementation assigns a default value.
+        #
+        # @return [Numeric, nil]
         attr_reader :timeout
 
         # @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session initiation
@@ -73,7 +84,13 @@ module Gapic
         # @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data commands
         attr_reader :data_plane_retry_policy
 
-        # @return [Proc, nil] Callback invoked with Progress snapshots
+        ##
+        # Callback invoked with {Progress} snapshots during upload execution.
+        # Executed synchronously on the thread running the upload protocol; it must not block.
+        # Exceptions raised inside the callback immediately abort the upload session and
+        # propagate out of {#start} or {#resume}.
+        #
+        # @return [Proc, nil]
         attr_reader :on_progress
 
         # @return [Logger, nil] Logger instance
@@ -83,18 +100,24 @@ module Gapic
         # Initializes a new Resumable Upload Session.
         #
         # @param client_stub [Gapic::Rest::ClientStub] Underlying REST client stub
-        # @param stream [IO] Binary input stream to upload
+        # @param stream [IO] Binary input stream to upload. Precondition: assumed to be positioned at byte 0
+        #   (not rewound prior to reading) and not closed after use.
         # @param initial_url [String] Initial endpoint URI for session initiation
         # @param initial_body [String, nil] Request payload for session initiation (defaults to nil)
         # @param initial_headers [Hash<String, String>] Additional headers for initiation
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
-        # @param chunk_size [Integer, nil] Explicit chunk size in bytes
+        # @param chunk_size [Integer, nil] Explicit chunk size in bytes. If `nil`, the protocol implementation
+        #   assigns a default value. The effective chunk size may be modified if the server specifies a required
+        #   data granularity.
         # @param content_type [String, nil] MIME type of uploaded media
-        # @param timeout [Numeric, nil] Total upload timeout in seconds
+        # @param timeout [Numeric, nil] Total upload timeout in seconds. If `nil`, the protocol implementation
+        #   assigns a default value.
         # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Initiation retry policy
         # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Control retry policy
         # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Data retry policy
-        # @param on_progress [Proc, nil] Progress callback
+        # @param on_progress [Proc, nil] Progress callback invoked as `->(progress)` with a {Progress} instance.
+        #   Executed synchronously on the upload protocol thread; it must not block.
+        #   Exceptions raised inside the callback abort the session and propagate out of {#start} or {#resume}.
         # @param logger [Logger, nil] Logger instance
         #
         def initialize client_stub:,
@@ -181,10 +204,18 @@ module Gapic
         # Starts a new upload session on the server.
         #
         # A session performs exactly one run (`start` or `resume`). Calling `start` on an already-bound
-        # or executed session raises {SessionStateError}.
+        # or executed session raises {SessionStateError}. Precondition: the stream is assumed to be
+        # positioned at byte 0 (the session does not rewind it before reading) and is not closed after use.
         #
         # @return [String, Object] Final response body upon completion
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
+        # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs
+        # @raise [DeadlineExceededError] If the global upload timeout is exceeded
+        # @raise [BadResponseError] If an unexpected or malformed HTTP response is received
+        # @raise [UnseekableStreamError] If stream rewinding is required during recovery on an unseekable stream
+        # @raise [StreamMismatchError] If stream content or length does not match protocol expectations
+        # @raise [InvalidTransitionError] If an unmatched event occurs for the current protocol state
+        # @raise [UploadRejectedError] If the server explicitly rejects the upload session
         def start
           driver = nil
           @mutex.synchronize do
@@ -206,7 +237,8 @@ module Gapic
         # 2. `resume(resume_handle:)`: Resumes via {ResumeHandle}.
         #
         # A session performs exactly one run (`start` or `resume`). Resuming must be executed on a
-        # fresh, unexecuted session. Precondition: the stream must be positioned at byte 0.
+        # fresh, unexecuted session. Precondition: the stream must be positioned at byte 0 (it is not
+        # rewound prior to reading) and is not closed after use.
         # The Driver fast-forwards to the server's acknowledged offset (by seeking on seekable streams
         # or reading and discarding on unseekable streams).
         #
@@ -218,6 +250,13 @@ module Gapic
         # @return [String, Object] Final response body upon completion
         # @raise [ArgumentError] If argument shape is invalid, target upload is missing, or stream.pos != 0
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
+        # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs
+        # @raise [DeadlineExceededError] If the global upload timeout is exceeded
+        # @raise [BadResponseError] If an unexpected or malformed HTTP response is received
+        # @raise [UnseekableStreamError] If stream rewinding is required during recovery on an unseekable stream
+        # @raise [StreamMismatchError] If stream content or length does not match the resumed upload
+        # @raise [InvalidTransitionError] If an unmatched event occurs for the current protocol state
+        # @raise [UploadRejectedError] If the server explicitly rejects the upload session
         def resume upload_url: nil,
                    chunk_size: nil,
                    resume_handle: nil
@@ -248,18 +287,38 @@ module Gapic
 
         private
 
+        ##
+        # @private
+        # Returns the established upload URL without locking.
+        #
+        # @return [String, nil]
         def upload_url_internal
           @upload_url || @last_driver&.upload_url
         end
 
+        ##
+        # @private
+        # Returns whether the session is bound without locking.
+        #
+        # @return [Boolean]
         def bound_internal?
           @executed || !upload_url_internal.nil?
         end
 
+        ##
+        # @private
+        # Returns the current resume handle from the driver without locking.
+        #
+        # @return [ResumeHandle, nil]
         def resume_handle_internal
           @last_driver&.resume_handle
         end
 
+        ##
+        # @private
+        # Builds configuration for a new upload session.
+        #
+        # @return [CompleteUploadConfig]
         def build_start_config
           CompleteUploadConfig.new(
             initial_url:                @initial_url,
@@ -277,6 +336,13 @@ module Gapic
           )
         end
 
+        ##
+        # @private
+        # Builds configuration for resuming an upload session.
+        #
+        # @param target_url [String] Target upload session URL
+        # @param target_chunk_size [Integer] Effective chunk size in bytes
+        # @return [ResumeUploadConfig]
         def build_resume_config target_url, target_chunk_size
           ResumeUploadConfig.new(
             upload_url:                 target_url,
@@ -292,6 +358,15 @@ module Gapic
           )
         end
 
+        ##
+        # @private
+        # Validates and extracts target upload URL and chunk size from resume keyword arguments.
+        #
+        # @param upload_url [String, nil] Explicit upload URL
+        # @param chunk_size [Integer, nil] Explicit chunk size
+        # @param resume_handle [ResumeHandle, nil] Explicit resume handle
+        # @return [Array<String, Integer>] Tuple of [upload_url, chunk_size]
+        # @raise [ArgumentError] If arguments are missing or mutually exclusive
         def resolve_resume_args upload_url:, chunk_size:, resume_handle:
           if resume_handle
             raise ArgumentError, "Cannot pass both resume_handle and upload_url/chunk_size" if upload_url || chunk_size
@@ -306,6 +381,12 @@ module Gapic
           end
         end
 
+        ##
+        # @private
+        # Executes the driver run and records the final upload URL and state.
+        #
+        # @param driver [Driver] Driver instance to run
+        # @return [String, Object] Final response body upon completion
         def execute_run driver
           @mutex.synchronize { @last_driver = driver }
           result = driver.run

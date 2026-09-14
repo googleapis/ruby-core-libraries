@@ -570,6 +570,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Extracts a {ResumeHandle} from current protocol state.
         # Completed uploads (`:success`), rejected uploads (`:rejected`), and cancelled uploads
         # (`:cancelled`) are finalized and not resumable, returning `nil`. Completed uploads are not resumable.
