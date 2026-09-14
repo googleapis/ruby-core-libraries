@@ -242,9 +242,10 @@ module Gapic
         #
         # @param initial_url [String] Initial endpoint URI for session initiation
         # @param initial_body [String, nil] Request payload for session initiation
-        # @param initial_headers [Hash<String, String>] Additional headers for the initiation request. Merged
-        #   last, so a key given here overrides the protocol header the session would otherwise send,
-        #   regardless of its casing.
+        # @param initial_headers [Hash<String, String>] Additional headers for the initiation request.
+        #   Keys beginning with `x-goog-upload-` are rejected with an `ArgumentError` in any casing —
+        #   they carry protocol mechanics the session owns. Use the constructor's `content_type` and
+        #   `upload_size` to shape the media descriptors.
         # @param chunk_size [Integer, nil] Requested chunk size in bytes, defaulting to 8 MB. The effective
         #   size is rounded down to a multiple of any chunk granularity the server requires, or raised to that
         #   granularity if it exceeds the requested size.
@@ -253,7 +254,8 @@ module Gapic
         #   the settings it names and leaves the remaining defaults, including retry codes and predicates, in
         #   place.
         # @return [String, Object] Final response body upon completion
-        # @raise [ArgumentError] If `initial_url` is missing or blank, or a retry policy argument is neither a
+        # @raise [ArgumentError] If `initial_url` is missing or blank, if `initial_headers` sets a
+        #   reserved x-goog-upload-* header, or if a retry policy argument is neither a
         #   {Gapic::Common::RetryPolicy}, a Hash, nor `nil`
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
         # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs

@@ -200,6 +200,31 @@ class DriverConfigTest < Minitest::Test
     end
   end
 
+  def test_start_headers_passes_unrelated_caller_headers_through
+    config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("0123")
+    driver = Driver.new client_stub: FakeClientStub.new, config: config
+    instruction = Instruction::SendStart.new(
+      url:     "https://example.com/upload",
+      headers: { "X-Custom" => "value" }
+    )
+
+    headers = driver.send :start_headers, instruction
+
+    assert_equal "value", headers["X-Custom"]
+    assert_equal "resumable", headers["X-Goog-Upload-Protocol"]
+    assert_equal "start", headers["X-Goog-Upload-Command"]
+  end
+
+  def test_start_headers_without_caller_headers_is_unchanged
+    config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("0123")
+    driver = Driver.new client_stub: FakeClientStub.new, config: config
+    instruction = Instruction::SendStart.new url: "https://example.com/upload"
+
+    headers = driver.send :start_headers, instruction
+
+    assert_equal({ "X-Goog-Upload-Protocol" => "resumable", "X-Goog-Upload-Command" => "start" }, headers)
+  end
+
   private
 
   def scripted_recovery_responses

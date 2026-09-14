@@ -61,6 +61,33 @@ class DataTypesTest < Minitest::Test
     end
   end
 
+  def test_start_upload_config_rejects_reserved_initial_headers
+    stream = StringIO.new "content"
+    reserved = ["X-Goog-Upload-Command", "x-goog-upload-command", "X-GOOG-UPLOAD-COMMAND",
+                "X-Goog-Upload-Protocol", "x-goog-upload-offset",
+                "X-Goog-Upload-Header-Content-Type", "x-goog-upload-header-content-length"]
+
+    reserved.each do |header|
+      error = assert_raises ArgumentError do
+        StartUploadConfig.new initial_url: "https://example.com", stream: stream, initial_headers: { header => "x" }
+      end
+      assert_match(/must not set protocol header/, error.message)
+      assert_includes error.message, header
+    end
+  end
+
+  def test_start_upload_config_allows_caller_owned_initial_headers
+    stream = StringIO.new "content"
+    headers = {
+      "Authorization" => "Bearer token",
+      "X-Custom"      => "value"
+    }
+
+    config = StartUploadConfig.new initial_url: "https://example.com", stream: stream, initial_headers: headers
+
+    assert_equal headers, config.initial_headers
+  end
+
   def test_state_defaults_and_with
     state = State.new
 

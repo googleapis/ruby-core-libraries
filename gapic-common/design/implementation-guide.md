@@ -6,7 +6,7 @@ The Resumable Upload Protocol (RUP) implementation in `gapic-common` is structur
 
 ```mermaid
 graph TD
-    Client[Client Code] -->|CompleteUploadConfig| Driver
+    Client[Client Code] -->|StartUploadConfig| Driver
     subgraph Gapic::Rest::ResumableUpload
         Driver[Driver <br/> Synchronous I/O Adapter] -->|Events| Core[Core <br/> State Container]
         Core -->|Instructions| Driver
@@ -43,18 +43,27 @@ The `Rules` module encapsulates the Resumable Upload Protocol state transitions 
 Because arbitrary Ruby `IO` objects (network sockets, pipes, `STDIN`) do not support seeking (`#seek`), the Driver buffers the current in-flight chunk in memory (bounded by chunk size, default: 8MB). When `RetryPolicy` executes transport retries, or when `Core` triggers Category 2 recovery realignments within the buffered range, the Driver retransmits directly from memory. The buffer is discarded only after receiving a `200 OK` durably confirming receipt of the chunk.
 
 ### 1.5 Session (Transfer Coordinator)
-The `Session` (`Gapic::Rest::ResumableUpload::Session`) provides a client-facing coordinator that encapsulates configuration, owns the input stream, and manages upload execution across a strict single-run lifecycle.
+The `Session` (`Gapic::Rest::ResumableUpload::Session`) provides a client-facing coordinator that encapsulates shared transfer configuration, owns the input stream, and manages upload execution across a strict single-run lifecycle.
 
 #### Single-Run Contract & Two-State Model
 A session adheres to a two-state model with a strict single-run contract: a session performs exactly one run (`start` or `resume`), never both, never twice.
 
 1.  **Unbound (`!session.bound?`)**:
     *   Initial state upon construction (`Session.new`). The session has not yet executed a run.
-    *   Permitted operations: `start` or `resume(...)`.
+    *   Permitted operations: `start(...)` or `resume(...)`.
 2.  **Bound (`session.bound?`)**:
     *   Transitions to bound as soon as `start` or `resume` begins execution.
     *   The session has executed its run and cannot be reused.
     *   Both `start` and `resume` raise `SessionStateError` ("Session has already executed a run").
+
+#### Constructor & Initiation Signatures
+Configuration is split between transfer-wide options passed to `Session.new` (`COMMON_MEMBERS` plus `client_stub` and `logger`) and initiation-only arguments passed to `Session#start`:
+*   **Constructor (`Session#initialize`)**:
+    `Session.new(client_stub:, stream:, upload_size: nil, content_type: nil, timeout: nil, control_plane_retry_policy: nil, data_plane_retry_policy: nil, on_progress: nil, logger: nil)`
+*   **Initiation (`Session#start`)**:
+    `session.start(initial_url:, initial_body: nil, initial_headers: {}, chunk_size: nil, start_retry_policy: nil)`
+    *   `initial_url` is required (`ArgumentError` if missing or blank).
+    *   `initial_headers` accepts caller-supplied HTTP headers for the initiation request, merged over the driver's headers. Any key with the `x-goog-upload-` prefix (in any casing) raises an `ArgumentError`; callers influence `X-Goog-Upload-Header-Content-Type` and `X-Goog-Upload-Header-Content-Length` through `content_type:` and `upload_size:` on the constructor.
 
 #### Resumability (`session.resumable?`)
 *   Reports whether a *new* session can resume the transfer (`!session.resume_handle.nil?`).
@@ -92,24 +101,30 @@ Because a session performs only a single run, resuming an interrupted upload req
 
 ## 2. Component Interfaces & Data Models
 
-### 2.1 Client Configuration (`CompleteUploadConfig`)
+### 2.1 Initiation Configuration (`StartUploadConfig`)
 ```ruby
 module Gapic
   module Rest
     module ResumableUpload
-      CompleteUploadConfig = Data.define(
-        :initial_url,                      # [String] Initial endpoint URI for session initiation
-        :initial_body,                     # [String] Request payload for session initiation
-        :initial_headers,                  # [Hash<String, String>] Additional headers for initiation
+      COMMON_MEMBERS = [
         :stream,                           # [IO] Binary input stream to upload
         :upload_size,                      # [Integer, nil] Total upload bytes if known upfront
-        :chunk_size,                       # [Integer, nil] Explicit chunk size in bytes
-        :content_type,                     # [String] MIME type of uploaded media
+        :content_type,                     # [String, nil] MIME type of uploaded media
         :timeout,                          # [Numeric, nil] Total upload timeout in seconds (zero/negative treated as nil)
-        :start_retry_policy,               # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for start command
         :control_plane_retry_policy,       # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for query/cancel commands
         :data_plane_retry_policy,          # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for upload/finalize
         :on_progress                       # [Proc, nil] Callback: ->(progress) with a Progress instance
+      ].freeze
+
+      RESERVED_INITIAL_HEADER_PREFIX = "x-goog-upload-"
+
+      StartUploadConfig = Data.define(
+        *COMMON_MEMBERS,
+        :initial_url,                      # [String] Initial endpoint URI for session initiation
+        :initial_body,                     # [String, nil] Request payload for session initiation
+        :initial_headers,                  # [Hash<String, String>] Additional headers for initiation (x-goog-upload-* rejected)
+        :chunk_size,                       # [Integer, nil] Explicit chunk size in bytes
+        :start_retry_policy                # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for start command
       )
 
       Progress = Data.define(
@@ -125,6 +140,10 @@ module Gapic
 end
 ```
 
+**Reserved Header Prefix Rule (`RESERVED_INITIAL_HEADER_PREFIX`):**
+* Every header under the `"x-goog-upload-"` prefix is protocol machinery owned by the driver (`X-Goog-Upload-Protocol`, `X-Goog-Upload-Command`, `X-Goog-Upload-Offset`, `X-Goog-Upload-Header-Content-Type`, `X-Goog-Upload-Header-Content-Length`).
+* Any key in `initial_headers` beginning with `x-goog-upload-` (case-insensitively) is rejected at configuration construction with an `ArgumentError`. Callers shape media descriptors exclusively through `content_type` and `upload_size`.
+
 **Progress Notification Contract (`on_progress`):**
 * `on_progress` fires whenever upload status or server-confirmed byte offset changes. Sequential callbacks may report the same `bytes_uploaded`.
 * `bytes_uploaded` represents the server-confirmed offset and is **not guaranteed to be monotonic** — a server rewind during recovery can decrease this value.
@@ -137,22 +156,15 @@ module Gapic
   module Rest
     module ResumableUpload
       ResumeUploadConfig = Data.define(
+        *COMMON_MEMBERS,
         :upload_url,                       # [String] Upload session URL returned by the upload backend
-        :chunk_size,                       # [Integer] Chunk size in bytes (> 0)
-        :stream,                           # [IO] Binary input stream to upload
-        :upload_size,                      # [Integer, nil] Total upload bytes if known upfront
-        :content_type,                     # [String, nil] MIME type of uploaded media
-        :timeout,                          # [Numeric, nil] Total upload timeout in seconds (zero/negative treated as nil)
-        :start_retry_policy,               # [Gapic::Common::RetryPolicy, Hash, nil] Unused; retained for config parity
-        :control_plane_retry_policy,       # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for query/cancel commands
-        :data_plane_retry_policy,          # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for upload/finalize
-        :on_progress                       # [Proc, nil] Callback: ->(progress) with a Progress instance
+        :chunk_size                        # [Integer] Chunk size in bytes (> 0)
       )
     end
   end
 end
 ```
-`ResumeUploadConfig` allows resuming an existing session directly using the session URL (typically obtained from `ResumeHandle#upload_url` or an error's `#resume_handle`).
+`ResumeUploadConfig` allows resuming an existing session directly using the session URL (typically obtained from `ResumeHandle#upload_url` or an error's `#resume_handle`). Because a resumed run skips session initiation, `start_retry_policy` and initiation headers/URL are absent.
 
 ### 2.3 Protocol State (`State`) & Decisions (`Decision`)
 ```ruby
@@ -306,6 +318,7 @@ Full implementation: [reference-implementation.md#3-driver-class](reference-impl
 1.  **Logical Header Prefixing**: In the `start` request, logical headers describing the uploaded object must be prefixed with `X-Goog-Upload-Header-`. Specifically:
     *   `X-Goog-Upload-Header-Content-Type: config.content_type`
     *   `X-Goog-Upload-Header-Content-Length: config.upload_size` (if known upfront).
+    *   Callers cannot supply these or any other `x-goog-upload-*` header via `initial_headers` (doing so raises an `ArgumentError`).
 2.  **Offset Extraction**: On `query` responses, the acknowledged byte count is extracted from `X-Goog-Upload-Size-Received` as an integer (`server_offset`).
 3.  **Request Modification on 4xx**: Retrying Category 2 errors requires querying the backend for `server_offset` first.
 4.  **Standard Retry Configuration & Distinct Policies**: The Driver manages distinct retry policy configurations for Category 1 transient errors:
@@ -413,7 +426,7 @@ Upon receiving `200 OK` from the `start` request, `Core` inspects the response h
 
 ### 5.1 Variable Definitions
 *   `DEFAULT_CHUNK_SIZE`: Default chunk size of `8_388_608` bytes (8 MB).
-*   `user_chunk_size`: Explicit chunk size specified in `CompleteUploadConfig.chunk_size` (or `nil` if unspecified).
+*   `user_chunk_size`: Explicit chunk size specified in `StartUploadConfig.chunk_size` (or `nil` if unspecified).
 *   `chunk_granularity`: Required byte alignment modulus parsed from header `X-Goog-Upload-Chunk-Granularity` as an Integer (or `nil` if header is absent).
 *   `effective_chunk_size`: Final calculated byte size used by Driver for in-memory buffering and chunk transmission.
 

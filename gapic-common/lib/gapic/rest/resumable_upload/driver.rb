@@ -511,6 +511,11 @@ module Gapic
         # @private
         # Builds initiation HTTP headers from instruction and config.
         #
+        # Every header derived here carries the `x-goog-upload-` prefix, and caller headers bearing
+        # that prefix are rejected when the config is built (see {RESERVED_INITIAL_HEADER_PREFIX}).
+        # The two sets are disjoint, so a plain merge cannot drop a driver header or duplicate one
+        # under a different casing.
+        #
         # @param instruction [Instruction::SendStart] Start instruction
         # @return [Hash<String, String>] HTTP request headers
         #
@@ -518,7 +523,7 @@ module Gapic
           headers = { "X-Goog-Upload-Protocol" => "resumable", "X-Goog-Upload-Command" => "start" }
           headers["X-Goog-Upload-Header-Content-Type"] = @config.content_type if @config.content_type
           headers["X-Goog-Upload-Header-Content-Length"] = @config.upload_size.to_s if @config.upload_size
-          headers.merge(instruction.headers || {})
+          headers.merge instruction.headers || {}
         end
 
         ##

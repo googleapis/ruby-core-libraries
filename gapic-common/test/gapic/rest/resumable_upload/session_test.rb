@@ -163,6 +163,18 @@ class SessionTest < Minitest::Test
     assert_match(/Expected RetryPolicy, Hash, or nil/, error.message)
   end
 
+  def test_start_with_reserved_initial_header_raises_before_any_request
+    stub = ScriptedClientStub.new
+    session = build_session stub: stub
+
+    error = assert_raises ArgumentError do
+      start_session session, initial_headers: { "X-Goog-Upload-Header-Content-Type" => "image/png" }
+    end
+    assert_match(/must not set protocol header/, error.message)
+    assert_empty stub.requests
+    refute session.bound?
+  end
+
   def test_failed_start_leaves_session_reusable
     session = build_session
 

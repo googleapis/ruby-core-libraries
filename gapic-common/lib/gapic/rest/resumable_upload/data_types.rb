@@ -54,6 +54,19 @@ module Gapic
 
       ##
       # @private
+      # Header-name prefix a caller may not use in `initial_headers`, lowercased for comparison.
+      #
+      # Every header under this prefix is protocol machinery the driver owns: the command verb, the
+      # byte offset, and the content descriptors derived from `content_type` and `upload_size`. A
+      # caller-supplied value competes with the driver's own bookkeeping, and the resulting failure
+      # never names the cause. Callers shape these through `content_type` and `upload_size` instead.
+      #
+      # See `Driver#start_headers`, which builds the headers this prefix protects.
+      #
+      RESERVED_INITIAL_HEADER_PREFIX = "x-goog-upload-"
+
+      ##
+      # @private
       # Immutable configuration for a run that initiates a new upload session, i.e. {Session#start}.
       #
       # Carries {COMMON_MEMBERS} plus the members only an initiating run uses.
@@ -63,7 +76,9 @@ module Gapic
       # @!attribute [r] initial_body
       #   @return [String, nil] Request payload for session initiation
       # @!attribute [r] initial_headers
-      #   @return [Hash<String, String>] Additional headers for initiation
+      #   @return [Hash<String, String>] Additional headers for initiation, merged over the driver's
+      #     own headers. Keys beginning with {RESERVED_INITIAL_HEADER_PREFIX} are rejected in any
+      #     casing; use `content_type` and `upload_size` to shape those.
       # @!attribute [r] chunk_size
       #   @return [Integer, nil] Requested chunk size in bytes, aligned to the granularity the server
       #     reports during initiation. A resumed run takes its chunk size from {ResumeUploadConfig}.
@@ -110,6 +125,14 @@ module Gapic
                        on_progress: nil
           raise ArgumentError, "initial_url is required" if initial_url.nil? || initial_url.to_s.strip.empty?
           raise ArgumentError, "stream is required" if stream.nil?
+          reserved = (initial_headers || {}).keys.find do |key|
+            key.to_s.downcase.start_with? RESERVED_INITIAL_HEADER_PREFIX
+          end
+          if reserved
+            raise ArgumentError,
+                  "initial_headers must not set protocol header #{reserved.inspect}; " \
+                  "use content_type and upload_size instead"
+          end
 
           super(
             initial_url:                initial_url,
