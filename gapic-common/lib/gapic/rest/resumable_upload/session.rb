@@ -32,9 +32,51 @@ module Gapic
       # 2. **Bound** (`bound?`): Session has executed or bound to an upload URL. Permitted operations:
       #    none (`start` and `resume` both raise {SessionStateError}).
       #
-      # Calling {resumable?} reports whether a new session can resume the upload (`!resume_handle.nil?`).
-      # Completed uploads (`:success`), rejected uploads, and cancelled uploads are finalized and not
-      # resumable (`resumable?` returns `false`, `resume_handle` returns `nil`).
+      # Calling {#resumable?} reports whether a new session can resume the upload (`!resume_handle.nil?`).
+      # Completed uploads (`:success`) and rejected uploads are finalized and not resumable
+      # (`resumable?` returns `false`, `resume_handle` returns `nil`).
+      #
+      # ### Execution Model
+      #
+      # {#start} and {#resume} are synchronous: they block the calling thread for the entire duration of the
+      # upload and return only on completion or failure. The `on_progress` callback runs on that same thread.
+      #
+      # The remaining readers ({#upload_url}, {#bound?}, {#resume_handle}, {#resumable?}, {#running?}) are
+      # guarded by an internal mutex and may be called from another thread while a run is in progress. Values
+      # read mid-run are a best-effort snapshot of a state the upload thread is still advancing.
+      #
+      # ### Where Arguments Live
+      #
+      # The constructor takes what both run types share: the client stub, the stream, `upload_size`,
+      # `content_type`, `timeout`, the control- and data-plane retry policies, `on_progress` and `logger`.
+      # Arguments that belong to one run live on the method performing it — `initial_url`, `initial_body`,
+      # `initial_headers`, `chunk_size` and `start_retry_policy` on {#start}; `upload_url` and `chunk_size`,
+      # or a {ResumeHandle}, on {#resume}.
+      #
+      # ### Recovering From a Failure
+      #
+      # A bound session never runs again, so recovery means constructing a new Session. Errors that carry a
+      # resume handle include the {HasResumeHandle} mixin, which can be rescued directly to catch all of them:
+      #
+      # @example Resuming after a recoverable failure
+      #   begin
+      #     session.start initial_url: url
+      #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
+      #     raise unless e.resume_handle
+      #     Session.new(client_stub: client_stub, stream: File.open(path, "rb"))
+      #            .resume(resume_handle: e.resume_handle)
+      #   end
+      #
+      # The replacement session needs a stream positioned at byte 0 of the whole object, not at the server's
+      # acknowledged offset; {#resume} fast-forwards on its own. For an unseekable stream that means opening a
+      # fresh one, since it cannot be rewound.
+      #
+      # ### Defaults
+      #
+      # * `chunk_size` defaults to 8 MB, then rounds down to a multiple of any chunk granularity the server
+      #   requires.
+      # * `timeout` defaults to `upload_size / 1 MB per second` when `upload_size` is known, floored at one
+      #   hour, and to one hour flat when it is not.
       #
       class Session
         # @return [Gapic::Rest::ClientStub] Underlying REST client stub
@@ -47,41 +89,32 @@ module Gapic
         # @return [IO]
         attr_reader :stream
 
-        # @return [String] Initial endpoint URI for session initiation
-        attr_reader :initial_url
-
-        # @return [String, nil] Request payload for session initiation
-        attr_reader :initial_body
-
-        # @return [Hash<String, String>] Additional headers for initiation
-        attr_reader :initial_headers
-
         # @return [Integer, nil] Total upload bytes if known upfront
         attr_reader :upload_size
-
-        ##
-        # Explicit chunk size in bytes. If `nil`, the protocol implementation assigns a default value.
-        # The effective chunk size may be adjusted if the server specifies a required data granularity.
-        #
-        # @return [Integer, nil]
-        attr_reader :chunk_size
 
         # @return [String, nil] MIME type of uploaded media
         attr_reader :content_type
 
         ##
-        # Total upload timeout in seconds. If `nil`, the protocol implementation assigns a default value.
+        # Total upload timeout in seconds, covering the whole run rather than any single request. When `nil`,
+        # it resolves to `upload_size / 1 MB per second` floored at one hour if `upload_size` is known, and to
+        # one hour flat otherwise. Zero and negative values are treated as `nil`.
         #
         # @return [Numeric, nil]
         attr_reader :timeout
 
-        # @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session initiation
-        attr_reader :start_retry_policy
-
-        # @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for control commands
+        ##
+        # Retry policy for control commands (query, cancel). A {Gapic::Common::RetryPolicy} replaces the
+        # default policy outright; a Hash overrides only the settings it names.
+        #
+        # @return [Gapic::Common::RetryPolicy, Hash, nil]
         attr_reader :control_plane_retry_policy
 
-        # @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data commands
+        ##
+        # Retry policy for data commands (upload, finalize). A {Gapic::Common::RetryPolicy} replaces the
+        # default policy outright; a Hash overrides only the settings it names.
+        #
+        # @return [Gapic::Common::RetryPolicy, Hash, nil]
         attr_reader :data_plane_retry_policy
 
         ##
@@ -99,20 +132,18 @@ module Gapic
         ##
         # Initializes a new Resumable Upload Session.
         #
+        # The constructor takes only what both run types share. Arguments specific to a single run live on
+        # the method that performs it: initiation details on {#start}, the upload URL and chunk size on
+        # {#resume}.
+        #
         # @param client_stub [Gapic::Rest::ClientStub] Underlying REST client stub
         # @param stream [IO] Binary input stream to upload. Precondition: assumed to be positioned at byte 0
         #   (not rewound prior to reading) and not closed after use.
-        # @param initial_url [String] Initial endpoint URI for session initiation
-        # @param initial_body [String, nil] Request payload for session initiation (defaults to nil)
-        # @param initial_headers [Hash<String, String>] Additional headers for initiation
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
-        # @param chunk_size [Integer, nil] Explicit chunk size in bytes. If `nil`, the protocol implementation
-        #   assigns a default value. The effective chunk size may be modified if the server specifies a required
-        #   data granularity.
         # @param content_type [String, nil] MIME type of uploaded media
-        # @param timeout [Numeric, nil] Total upload timeout in seconds. If `nil`, the protocol implementation
-        #   assigns a default value.
-        # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Initiation retry policy
+        # @param timeout [Numeric, nil] Total upload timeout in seconds covering the whole run. When `nil`,
+        #   resolves to `upload_size / 1 MB per second` floored at one hour if `upload_size` is known, and to
+        #   one hour flat otherwise.
         # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Control retry policy
         # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Data retry policy
         # @param on_progress [Proc, nil] Progress callback invoked as `->(progress)` with a {Progress} instance.
@@ -122,28 +153,18 @@ module Gapic
         #
         def initialize client_stub:,
                        stream:,
-                       initial_url:,
-                       initial_body: nil,
-                       initial_headers: {},
                        upload_size: nil,
-                       chunk_size: nil,
                        content_type: nil,
                        timeout: nil,
-                       start_retry_policy: nil,
                        control_plane_retry_policy: nil,
                        data_plane_retry_policy: nil,
                        on_progress: nil,
                        logger: nil
           @client_stub = client_stub
           @stream = stream
-          @initial_url = initial_url
-          @initial_body = initial_body
-          @initial_headers = initial_headers || {}
           @upload_size = upload_size
-          @chunk_size = chunk_size
           @content_type = content_type
           @timeout = timeout
-          @start_retry_policy = start_retry_policy
           @control_plane_retry_policy = control_plane_retry_policy
           @data_plane_retry_policy = data_plane_retry_policy
           @on_progress = on_progress
@@ -207,7 +228,33 @@ module Gapic
         # or executed session raises {SessionStateError}. Precondition: the stream is assumed to be
         # positioned at byte 0 (the session does not rewind it before reading) and is not closed after use.
         #
+        # Blocks the calling thread until the upload completes or fails.
+        #
+        # @example Uploading a file with progress reporting
+        #   session = Gapic::Rest::ResumableUpload::Session.new(
+        #     client_stub:  client_stub,
+        #     stream:       File.open("movie.mp4", "rb"),
+        #     upload_size:  File.size("movie.mp4"),
+        #     content_type: "video/mp4",
+        #     on_progress:  ->(progress) { puts "#{progress.phase}: #{progress.bytes_uploaded} bytes" }
+        #   )
+        #   response = session.start initial_url: "https://example.googleapis.com/upload/v1/media"
+        #
+        # @param initial_url [String] Initial endpoint URI for session initiation
+        # @param initial_body [String, nil] Request payload for session initiation
+        # @param initial_headers [Hash<String, String>] Additional headers for the initiation request. Merged
+        #   last, so a key given here overrides the protocol header the session would otherwise send,
+        #   regardless of its casing.
+        # @param chunk_size [Integer, nil] Requested chunk size in bytes, defaulting to 8 MB. The effective
+        #   size is rounded down to a multiple of any chunk granularity the server requires, or raised to that
+        #   granularity if it exceeds the requested size.
+        # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for the initiation
+        #   request. A {Gapic::Common::RetryPolicy} replaces the default policy outright; a Hash overrides only
+        #   the settings it names and leaves the remaining defaults, including retry codes and predicates, in
+        #   place.
         # @return [String, Object] Final response body upon completion
+        # @raise [ArgumentError] If `initial_url` is missing or blank, or a retry policy argument is neither a
+        #   {Gapic::Common::RetryPolicy}, a Hash, nor `nil`
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
         # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs
         # @raise [DeadlineExceededError] If the global upload timeout is exceeded
@@ -216,16 +263,25 @@ module Gapic
         # @raise [StreamMismatchError] If stream content or length does not match protocol expectations
         # @raise [InvalidTransitionError] If an unmatched event occurs for the current protocol state
         # @raise [UploadRejectedError] If the server explicitly rejects the upload session
-        def start
+        def start initial_url:,
+                  initial_body: nil,
+                  initial_headers: {},
+                  chunk_size: nil,
+                  start_retry_policy: nil
+          config = build_start_config initial_url:        initial_url,
+                                      initial_body:       initial_body,
+                                      initial_headers:    initial_headers,
+                                      chunk_size:         chunk_size,
+                                      start_retry_policy: start_retry_policy
+
           driver = nil
           @mutex.synchronize do
             raise SessionStateError, "A run is already in progress for this session" if @running
             raise SessionStateError, "Session has already executed a run" if bound_internal?
 
+            driver = Driver.new client_stub: @client_stub, config: config, logger: @logger
             @executed = true
             @running = true
-            config = build_start_config
-            driver = Driver.new client_stub: @client_stub, config: config, logger: @logger
           end
 
           execute_run driver
@@ -237,12 +293,37 @@ module Gapic
         # 2. `resume(resume_handle:)`: Resumes via {ResumeHandle}.
         #
         # A session performs exactly one run (`start` or `resume`). Resuming must be executed on a
-        # fresh, unexecuted session. Precondition: the stream must be positioned at byte 0 (it is not
-        # rewound prior to reading) and is not closed after use.
-        # The Driver fast-forwards to the server's acknowledged offset (by seeking on seekable streams
-        # or reading and discarding on unseekable streams).
+        # fresh, unexecuted session. Blocks the calling thread until the upload completes or fails.
+        #
+        # A resumed run targets an upload the server has already created, so it takes no initiation
+        # arguments; everything it needs beyond the constructor is on this method.
+        #
+        # ### Chunk size
+        #
+        # A chunk size must be given explicitly because the server reports chunk granularity during
+        # initiation, which a resumed run skips. {ResumeHandle} carries the effective value from the original
+        # run for exactly this reason.
+        #
+        # ### Stream position
+        #
+        # The stream must be positioned at byte 0 of the whole object, not at the server's acknowledged
+        # offset, and is not closed after use. The Driver fast-forwards on its own, by seeking on seekable
+        # streams or by reading and discarding on unseekable ones. An unseekable stream therefore has to be
+        # freshly opened rather than rewound.
         #
         # Completed uploads are not resumable; attempting to resume a completed session raises {SessionStateError}.
+        #
+        # @example Resuming from a handle persisted by an earlier process
+        #   handle = Gapic::Rest::ResumableUpload::ResumeHandle.new(
+        #     upload_url: row[:upload_url],
+        #     chunk_size: row[:chunk_size]
+        #   )
+        #   session = Gapic::Rest::ResumableUpload::Session.new(
+        #     client_stub: client_stub,
+        #     stream:      File.open("movie.mp4", "rb"),
+        #     upload_size: File.size("movie.mp4")
+        #   )
+        #   response = session.resume resume_handle: handle
         #
         # @param upload_url [String, nil] Explicit upload URL
         # @param chunk_size [Integer, nil] Explicit chunk size
@@ -275,11 +356,11 @@ module Gapic
               raise ArgumentError, "Stream must be positioned at byte 0 to resume an upload (got pos #{@stream.pos})"
             end
 
+            config = build_resume_config target_url, target_chunk_size
+            driver = Driver.new client_stub: @client_stub, config: config, logger: @logger
             @executed = true
             @running = true
             @upload_url = target_url
-            config = build_resume_config target_url, target_chunk_size
-            driver = Driver.new client_stub: @client_stub, config: config, logger: @logger
           end
 
           execute_run driver
@@ -316,23 +397,40 @@ module Gapic
 
         ##
         # @private
-        # Builds configuration for a new upload session.
+        # Returns the configuration members shared by both run types, mirroring
+        # {ResumableUpload::COMMON_MEMBERS}.
         #
-        # @return [CompleteUploadConfig]
-        def build_start_config
-          CompleteUploadConfig.new(
-            initial_url:                @initial_url,
-            initial_body:               @initial_body,
-            initial_headers:            @initial_headers,
+        # @return [Hash{Symbol=>Object}]
+        def common_config_args
+          {
             stream:                     @stream,
             upload_size:                @upload_size,
-            chunk_size:                 @chunk_size,
             content_type:               @content_type,
             timeout:                    @timeout,
-            start_retry_policy:         @start_retry_policy,
             control_plane_retry_policy: @control_plane_retry_policy,
             data_plane_retry_policy:    @data_plane_retry_policy,
             on_progress:                @on_progress
+          }
+        end
+
+        ##
+        # @private
+        # Builds configuration for a new upload session.
+        #
+        # @param initial_url [String] Initial endpoint URI for session initiation
+        # @param initial_body [String, nil] Request payload for session initiation
+        # @param initial_headers [Hash<String, String>, nil] Additional headers for initiation
+        # @param chunk_size [Integer, nil] Requested chunk size in bytes
+        # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Initiation retry policy
+        # @return [StartUploadConfig]
+        def build_start_config initial_url:, initial_body:, initial_headers:, chunk_size:, start_retry_policy:
+          StartUploadConfig.new(
+            initial_url:        initial_url,
+            initial_body:       initial_body,
+            initial_headers:    initial_headers || {},
+            chunk_size:         chunk_size,
+            start_retry_policy: start_retry_policy,
+            **common_config_args
           )
         end
 
@@ -345,16 +443,9 @@ module Gapic
         # @return [ResumeUploadConfig]
         def build_resume_config target_url, target_chunk_size
           ResumeUploadConfig.new(
-            upload_url:                 target_url,
-            chunk_size:                 target_chunk_size,
-            stream:                     @stream,
-            upload_size:                @upload_size,
-            content_type:               @content_type,
-            timeout:                    @timeout,
-            start_retry_policy:         @start_retry_policy,
-            control_plane_retry_policy: @control_plane_retry_policy,
-            data_plane_retry_policy:    @data_plane_retry_policy,
-            on_progress:                @on_progress
+            upload_url: target_url,
+            chunk_size: target_chunk_size,
+            **common_config_args
           )
         end
 

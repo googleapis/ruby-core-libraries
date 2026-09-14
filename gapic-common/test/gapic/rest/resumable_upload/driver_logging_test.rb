@@ -71,7 +71,7 @@ class DriverLoggingTest < Minitest::Test
     ]
 
     stub = FakeStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("hello world"),
       upload_size: 11,
@@ -131,7 +131,7 @@ class DriverLoggingTest < Minitest::Test
     ]
 
     stub = FakeStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("hello world"),
       upload_size: 11,
@@ -196,7 +196,7 @@ class DriverLoggingTest < Minitest::Test
     ]
 
     stub = FakeStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("hello world"),
       upload_size: 11,
@@ -216,7 +216,7 @@ class DriverLoggingTest < Minitest::Test
   def test_unmatched_transition_logs_warn_and_reraises
     recording = RecordingLogger.new
     stub = FakeStub.new []
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("hello"),
       upload_size: 5,
@@ -316,7 +316,7 @@ class DriverLoggingTest < Minitest::Test
       headers: { "x-goog-upload-status" => "final" }
     )
     stub = FakeStub.new [wrapped_err]
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -345,7 +345,7 @@ class DriverLoggingTest < Minitest::Test
 
   def test_driver_error_mapping_populates_error_on_rescue
     stub = FakeStub.new []
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -379,7 +379,7 @@ class DriverLoggingTest < Minitest::Test
       body:    raw_body
     }
     stub = FakeStub.new [faraday_err]
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -408,7 +408,7 @@ class DriverLoggingTest < Minitest::Test
       body:    raw_body
     }
     stub = FakeStub.new [faraday_err]
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -444,7 +444,7 @@ class DriverLoggingTest < Minitest::Test
       instructions: []
     )
 
-    upload_log.lifecycle decision, CompleteUploadConfig.new(
+    upload_log.lifecycle decision, StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -482,7 +482,7 @@ class DriverLoggingTest < Minitest::Test
       body:    raw_body
     }
     stub = FakeStub.new [faraday_err]
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://storage.googleapis.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,
@@ -560,7 +560,7 @@ class DriverLoggingTest < Minitest::Test
     ]
 
     stub = FakeStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:     "https://storage.googleapis.com/upload?token=#{secret}",
       initial_headers: { "Authorization" => "Bearer #{secret}" },
       stream:          StringIO.new(stream_data),

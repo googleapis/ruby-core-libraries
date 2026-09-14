@@ -50,7 +50,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_resolve_timeout_prefers_positive_config_timeout
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: 10 * 1_048_576,
@@ -63,7 +63,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_resolve_timeout_treats_zero_timeout_same_as_nil
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       timeout:     0
@@ -75,7 +75,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_resolve_timeout_treats_negative_timeout_same_as_nil
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       timeout:     -10
@@ -88,7 +88,7 @@ class DriverConfigTest < Minitest::Test
   def test_resolve_timeout_calculates_from_upload_size_above_base_timeout
     stub = FakeClientStub.new
     large_size = 7_200 * Driver::MIN_ASSUMED_THROUGHPUT # 7200 seconds at 1MB/s
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: large_size
@@ -100,7 +100,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_resolve_timeout_uses_base_timeout_floor_for_small_upload_size
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: 1_048_576 # 1 second at 1MB/s < 3600
@@ -112,7 +112,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_resolve_timeout_defaults_to_base_timeout_when_upload_size_nil
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123")
     )
@@ -123,7 +123,7 @@ class DriverConfigTest < Minitest::Test
 
   def test_run_raises_deadline_exceeded_when_timeout_expires
     stub = FakeClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: 4,
@@ -156,7 +156,7 @@ class DriverConfigTest < Minitest::Test
     on_progress = lambda do |progress|
       current_time = 110.0 if progress.phase == :finalizing
     end
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: 4,
@@ -179,7 +179,7 @@ class DriverConfigTest < Minitest::Test
   def test_make_post_request_passes_timeout_close_to_remaining_budget_and_decreases_across_calls
     current_time = 1000.0
     stub = FakeClientStub.new(scripted_recovery_responses, on_request: -> { current_time += 10.0 })
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:             "https://example.com/upload",
       stream:                  StringIO.new("0123"),
       upload_size:             4,

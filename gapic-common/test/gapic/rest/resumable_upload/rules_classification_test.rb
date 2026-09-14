@@ -249,7 +249,7 @@ class RulesClassificationTest < Minitest::Test
 
   def test_decide_rejects_a_shape_outside_the_vocabulary
     state = State.new
-    config = CompleteUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("data")
+    config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("data")
 
     error = Rules.stub :shape_of, :not_a_real_shape do
       assert_raises ArgumentError do

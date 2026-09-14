@@ -24,9 +24,9 @@ require "stringio"
 class DataTypesTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
 
-  def test_complete_upload_config_defaults
+  def test_start_upload_config_defaults
     stream = StringIO.new "content"
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com",
       stream:      stream
     )
@@ -43,6 +43,22 @@ class DataTypesTest < Minitest::Test
     assert_nil config.control_plane_retry_policy
     assert_nil config.data_plane_retry_policy
     assert_nil config.on_progress
+  end
+
+  def test_start_upload_config_validations
+    stream = StringIO.new "content"
+
+    assert_raises ArgumentError do
+      StartUploadConfig.new initial_url: nil, stream: stream
+    end
+
+    assert_raises ArgumentError do
+      StartUploadConfig.new initial_url: "   ", stream: stream
+    end
+
+    assert_raises ArgumentError do
+      StartUploadConfig.new initial_url: "https://example.com", stream: nil
+    end
   end
 
   def test_state_defaults_and_with
@@ -145,7 +161,7 @@ class DataTypesTest < Minitest::Test
     assert_nil config.upload_size
     assert_nil config.content_type
     assert_nil config.timeout
-    assert_nil config.start_retry_policy
+    refute_respond_to config, :start_retry_policy
     assert_nil config.control_plane_retry_policy
     assert_nil config.data_plane_retry_policy
     assert_nil config.on_progress

@@ -46,7 +46,7 @@ class DriverTest < Minitest::Test
   def test_multi_chunk_upload_with_active_responses
     progress_records = []
     stub = FakeClientStub.new build_scripted_responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123456789"),
       upload_size: 10,
@@ -78,7 +78,7 @@ class DriverTest < Minitest::Test
     progress_records = []
     responses = build_recovery_responses
     stub = FakeClientStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123456789"),
       upload_size: 10,

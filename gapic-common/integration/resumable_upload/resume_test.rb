@@ -157,7 +157,7 @@ class ResumeTest < ShowcaseIntegrationTest
 
     session1 = build_session stream: stream, on_progress: on_progress
     err = assert_raises UserPauseError do
-      session1.start
+      start_session session1
     end
 
     assert session1.bound?
@@ -186,7 +186,7 @@ class ResumeTest < ShowcaseIntegrationTest
 
     session1 = build_session stream: UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE)), on_progress: on_progress
     err = assert_raises UserPauseError do
-      session1.start
+      start_session session1
     end
 
     assert session1.bound?
@@ -206,13 +206,13 @@ class ResumeTest < ShowcaseIntegrationTest
   # D7. Lifecycle and contract violations on session runs.
   def test_lifecycle_violations
     session = build_session stream: StringIO.new(payload(100)), upload_size: 100
-    session.start
+    start_session session
 
     assert session.bound?
 
     # Second start on executed session raises SessionStateError
     assert_raises Gapic::Rest::ResumableUpload::SessionStateError do
-      session.start
+      start_session session
     end
 
     # Resume on already bound/executed session raises SessionStateError

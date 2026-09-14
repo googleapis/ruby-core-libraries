@@ -120,9 +120,13 @@ class ShowcaseIntegrationTest < Minitest::Test
       defaults[:upload_size] = DEFAULT_PAYLOAD_SIZE
     end
 
-    Gapic::Rest::ResumableUpload::CompleteUploadConfig.new(**defaults, **overrides, initial_headers: headers)
+    Gapic::Rest::ResumableUpload::StartUploadConfig.new(**defaults, **overrides, initial_headers: headers)
   end
 
+  START_ONLY_KEYS = [:initial_url, :initial_body, :initial_headers, :chunk_size, :start_retry_policy].freeze
+
+  # Builds a session from the shared arguments and remembers the per-run arguments that #start needs,
+  # so callers can run it with `start_session session`.
   def build_session scenario: nil, scenario_config: {}, **overrides
     @progress_records = []
     headers = (overrides.delete(:initial_headers) || {}).dup
@@ -133,15 +137,18 @@ class ShowcaseIntegrationTest < Minitest::Test
       )
     end
 
+    @start_args = {
+      initial_url:        UPLOAD_PATH,
+      initial_headers:    headers,
+      start_retry_policy: FAST_RETRY,
+      chunk_size:         DEFAULT_CHUNK_SIZE
+    }.merge(overrides.slice(*START_ONLY_KEYS))
+
     defaults = {
       client_stub:                showcase_client_stub,
-      initial_url:                UPLOAD_PATH,
-      initial_headers:            headers,
-      start_retry_policy:         FAST_RETRY,
       control_plane_retry_policy: FAST_RETRY,
       data_plane_retry_policy:    FAST_RETRY,
       timeout:                    10,
-      chunk_size:                 DEFAULT_CHUNK_SIZE,
       on_progress:                ->(progress) { @progress_records << progress },
       logger:                     @logger
     }
@@ -150,7 +157,11 @@ class ShowcaseIntegrationTest < Minitest::Test
       defaults[:upload_size] = DEFAULT_PAYLOAD_SIZE
     end
 
-    Gapic::Rest::ResumableUpload::Session.new(**defaults, **overrides)
+    Gapic::Rest::ResumableUpload::Session.new(**defaults, **overrides.except(*START_ONLY_KEYS))
+  end
+
+  def start_session session, **overrides
+    session.start(**@start_args, **overrides)
   end
 
   def raw_start scenario: nil, scenario_config: {}, upload_size: nil, headers: {}

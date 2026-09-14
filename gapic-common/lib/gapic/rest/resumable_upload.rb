@@ -48,12 +48,13 @@ module Gapic
     # @example Initiating an upload, rescuing an error, and resuming from a fresh session
     #   session = Gapic::Rest::ResumableUpload::Session.new(
     #     client_stub: client_stub,
-    #     stream: stream,
-    #     initial_url: "https://example.googleapis.com/resumable/upload/v1/example/upload:new"
+    #     stream: stream
     #   )
     #
     #   begin
-    #     response = session.start
+    #     response = session.start(
+    #       initial_url: "https://example.googleapis.com/resumable/upload/v1/example/upload:new"
+    #     )
     #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
     #     handle = e.resume_handle
     #     raise unless handle
@@ -61,8 +62,7 @@ module Gapic
     #     stream.rewind
     #     resumed_session = Gapic::Rest::ResumableUpload::Session.new(
     #       client_stub: client_stub,
-    #       stream: stream,
-    #       initial_url: session.initial_url
+    #       stream: stream
     #     )
     #     response = resumed_session.resume resume_handle: handle
     #   end

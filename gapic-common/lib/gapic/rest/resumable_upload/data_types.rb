@@ -20,7 +20,43 @@ module Gapic
     module ResumableUpload
       ##
       # @private
-      # Immutable configuration for initiating and executing a resumable upload session.
+      # Configuration members shared by {StartUploadConfig} and {ResumeUploadConfig}, in the order both
+      # definitions splat them.
+      #
+      # The two config types are deliberately *flat*: {Core}, {Rules} and {Driver} read every member
+      # straight off `config`. Nesting the shared members inside a common object would turn every
+      # `config.upload_size` into `config.common.upload_size` at some thirty call sites for no behavioural
+      # gain, so they are spliced into each `Data.define` instead.
+      #
+      # * `stream` [IO] Binary input stream to upload. Required.
+      # * `upload_size` [Integer, nil] Total upload bytes if known upfront.
+      # * `content_type` [String, nil] MIME type of uploaded media.
+      # * `timeout` [Numeric, nil] Total upload timeout in seconds (zero or negative is treated as nil).
+      # * `control_plane_retry_policy` [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for control
+      #   commands (query, cancel).
+      # * `data_plane_retry_policy` [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data commands
+      #   (upload, finalize).
+      # * `on_progress` [Proc, nil] Callback invoked as `->(progress)` with a {Progress} instance.
+      #
+      # Every retry policy member, here and in the per-run configs, follows the same convention: a
+      # {Gapic::Common::RetryPolicy} replaces the default policy outright, while a Hash overrides only the
+      # settings it names and leaves the remaining defaults — including retry codes and predicates — in place.
+      #
+      COMMON_MEMBERS = [
+        :stream,
+        :upload_size,
+        :content_type,
+        :timeout,
+        :control_plane_retry_policy,
+        :data_plane_retry_policy,
+        :on_progress
+      ].freeze
+
+      ##
+      # @private
+      # Immutable configuration for a run that initiates a new upload session, i.e. {Session#start}.
+      #
+      # Carries {COMMON_MEMBERS} plus the members only an initiating run uses.
       #
       # @!attribute [r] initial_url
       #   @return [String] Initial endpoint URI for session initiation
@@ -28,46 +64,19 @@ module Gapic
       #   @return [String, nil] Request payload for session initiation
       # @!attribute [r] initial_headers
       #   @return [Hash<String, String>] Additional headers for initiation
-      # @!attribute [r] stream
-      #   @return [IO] Binary input stream to upload
-      # @!attribute [r] upload_size
-      #   @return [Integer, nil] Total upload bytes if known upfront
       # @!attribute [r] chunk_size
-      #   @return [Integer, nil] Explicit chunk size in bytes
-      # @!attribute [r] content_type
-      #   @return [String, nil] MIME type of uploaded media
-      # @!attribute [r] timeout
-      #   @return [Numeric, nil] Total upload timeout in seconds (zero/negative values treated as nil)
+      #   @return [Integer, nil] Requested chunk size in bytes, aligned to the granularity the server
+      #     reports during initiation. A resumed run takes its chunk size from {ResumeUploadConfig}.
       # @!attribute [r] start_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session initiation (start).
-      #     Passing a {Gapic::Common::RetryPolicy} replaces the default policy.
-      #     Passing a Hash overrides specified settings while preserving unspecified defaults
-      #     (such as retry codes and predicates).
-      # @!attribute [r] control_plane_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session control commands (query/cancel).
-      #     Passing a {Gapic::Common::RetryPolicy} replaces the default policy.
-      #     Passing a Hash overrides specified settings while preserving unspecified defaults.
-      # @!attribute [r] data_plane_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data transmission commands (upload/finalize).
-      #     Passing a {Gapic::Common::RetryPolicy} replaces the default policy.
-      #     Passing a Hash overrides specified settings while preserving unspecified defaults
-      #     (such as retry codes and predicates).
-      # @!attribute [r] on_progress
-      #   @return [Proc, nil] Callback invoked as `->(progress)` with a {Progress} instance
+      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session initiation
       #
-      CompleteUploadConfig = Data.define(
+      StartUploadConfig = Data.define(
+        *COMMON_MEMBERS,
         :initial_url,
         :initial_body,
         :initial_headers,
-        :stream,
-        :upload_size,
         :chunk_size,
-        :content_type,
-        :timeout,
-        :start_retry_policy,
-        :control_plane_retry_policy,
-        :data_plane_retry_policy,
-        :on_progress
+        :start_retry_policy
       ) do
         ##
         # @private
@@ -78,13 +87,14 @@ module Gapic
         # @param initial_body [String, nil] Request payload for session initiation
         # @param initial_headers [Hash<String, String>] Additional headers for initiation
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
-        # @param chunk_size [Integer, nil] Explicit chunk size in bytes
+        # @param chunk_size [Integer, nil] Requested chunk size in bytes
         # @param content_type [String, nil] MIME type of uploaded media
         # @param timeout [Numeric, nil] Total upload timeout in seconds (zero/negative values treated as nil)
         # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session initiation
         # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for control commands
         # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data commands
         # @param on_progress [Proc, nil] Callback invoked as `->(progress)` with a {Progress} instance
+        # @raise [ArgumentError] If required arguments are missing or invalid
         #
         def initialize initial_url:,
                        stream:,
@@ -98,6 +108,9 @@ module Gapic
                        control_plane_retry_policy: nil,
                        data_plane_retry_policy: nil,
                        on_progress: nil
+          raise ArgumentError, "initial_url is required" if initial_url.nil? || initial_url.to_s.strip.empty?
+          raise ArgumentError, "stream is required" if stream.nil?
+
           super(
             initial_url:                initial_url,
             initial_body:               initial_body,
@@ -117,46 +130,23 @@ module Gapic
 
       ##
       # @private
-      # Immutable configuration for resuming an existing upload session.
+      # Immutable configuration for a run that resumes an existing upload session, i.e. {Session#resume}.
+      #
+      # Carries {COMMON_MEMBERS} plus the upload URL and chunk size the earlier run established. There is
+      # no `start_retry_policy` here: a resumed run issues no initiation request, so the member would
+      # always be dead.
       #
       # @!attribute [r] upload_url
       #   @return [String] Session upload URL returned by the upload backend
       # @!attribute [r] chunk_size
-      #   @return [Integer] Explicit chunk size in bytes (must be a positive integer)
-      # @!attribute [r] stream
-      #   @return [IO] Binary input stream to upload
-      # @!attribute [r] upload_size
-      #   @return [Integer, nil] Total upload bytes if known upfront
-      # @!attribute [r] content_type
-      #   @return [String, nil] MIME type of uploaded media
-      # @!attribute [r] timeout
-      #   @return [Numeric, nil] Total upload timeout in seconds (zero/negative values treated as nil)
-      # @!attribute [r] start_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Unused; preserved for interface parity with
-      #     {CompleteUploadConfig}.
-      # @!attribute [r] control_plane_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for session control commands (query/cancel).
-      #     Passing a {Gapic::Common::RetryPolicy} replaces the default policy.
-      #     Passing a Hash overrides specified settings while preserving unspecified defaults.
-      # @!attribute [r] data_plane_retry_policy
-      #   @return [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data transmission commands (upload/finalize).
-      #     Passing a {Gapic::Common::RetryPolicy} replaces the default policy.
-      #     Passing a Hash overrides specified settings while preserving unspecified defaults
-      #     (such as retry codes and predicates).
-      # @!attribute [r] on_progress
-      #   @return [Proc, nil] Callback invoked as `->(progress)` with a {Progress} instance
+      #   @return [Integer] Explicit chunk size in bytes (must be a positive integer). Server granularity is
+      #     reported only during initiation, which a resumed run skips, so the size is carried forward from
+      #     the earlier run rather than re-negotiated.
       #
       ResumeUploadConfig = Data.define(
+        *COMMON_MEMBERS,
         :upload_url,
-        :chunk_size,
-        :stream,
-        :upload_size,
-        :content_type,
-        :timeout,
-        :start_retry_policy,
-        :control_plane_retry_policy,
-        :data_plane_retry_policy,
-        :on_progress
+        :chunk_size
       ) do
         ##
         # @private
@@ -168,7 +158,6 @@ module Gapic
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
         # @param content_type [String, nil] MIME type of uploaded media
         # @param timeout [Numeric, nil] Total upload timeout in seconds (zero/negative values treated as nil)
-        # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Unused; preserved for parity
         # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for control commands
         # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data commands
         # @param on_progress [Proc, nil] Callback invoked as `->(progress)` with a {Progress} instance
@@ -180,7 +169,6 @@ module Gapic
                        upload_size: nil,
                        content_type: nil,
                        timeout: nil,
-                       start_retry_policy: nil,
                        control_plane_retry_policy: nil,
                        data_plane_retry_policy: nil,
                        on_progress: nil
@@ -197,7 +185,6 @@ module Gapic
             upload_size:                upload_size,
             content_type:               content_type,
             timeout:                    timeout,
-            start_retry_policy:         start_retry_policy,
             control_plane_retry_policy: control_plane_retry_policy,
             data_plane_retry_policy:    data_plane_retry_policy,
             on_progress:                on_progress
@@ -250,6 +237,11 @@ module Gapic
 
       ##
       # Allowed lifecycle phases for an upload session.
+      #
+      # A callback observes `:initiating`, `:uploading`, `:recovering`, `:finalizing` and `:completed`.
+      # `:cancelling` is reserved: cancellation is not exposed on {Session}, so no phase with that value is
+      # currently emitted.
+      #
       # @return [Array<Symbol>]
       Progress::PHASES = [:initiating, :uploading, :recovering, :finalizing, :cancelling, :completed].freeze
 

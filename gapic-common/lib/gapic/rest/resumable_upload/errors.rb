@@ -144,6 +144,25 @@ module Gapic
       ##
       # Mixin providing {ResumeHandle} access and uniform formatting for resumable errors.
       #
+      # Every error that may carry a resume handle includes this module, so it doubles as the rescue target
+      # for "this upload failed but can be retried from where it stopped":
+      #
+      # @example
+      #   begin
+      #     session.start initial_url: url
+      #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
+      #     retry_later e.resume_handle if e.resume_handle
+      #     raise
+      #   end
+      #
+      # Included by {RequestFailedError}, {DeadlineExceededError}, {BadResponseError},
+      # {UnseekableStreamError}, {StreamMismatchError} and {InvalidTransitionError}.
+      #
+      # Deliberately **not** included by {UploadRejectedError} or {SessionStateError}: the first means the
+      # server refused the upload outright and the second is a caller misuse, so neither is retryable. Note
+      # also that `resume_handle` may still be `nil` on an including error, for instance when the failure
+      # happened before initiation established an upload URL.
+      #
       # @!attribute [r] resume_handle
       #   @return [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Associated upload session resume handle
       #

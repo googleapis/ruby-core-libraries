@@ -27,7 +27,7 @@ class UploadLogTest < Minitest::Test
     @recording = RecordingLogger.new
     stub_logger = Gapic::LoggingConcerns::StubLogger.new logger: @recording, service: "ResumableUpload"
     @upload_log = Driver::UploadLog.new stub_logger, upload_id: "test-upload-id"
-    @config = CompleteUploadConfig.new initial_url: "https://example.com/upload",
+    @config = StartUploadConfig.new initial_url: "https://example.com/upload",
                                        initial_body: nil,
                                        initial_headers: {},
                                        stream: StringIO.new("data"),

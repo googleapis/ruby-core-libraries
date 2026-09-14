@@ -25,7 +25,7 @@ class DriverRetryPolicyTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
 
   def setup
-    @config = CompleteUploadConfig.new(
+    @config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123")
     )
@@ -98,7 +98,7 @@ class DriverRetryPolicyTest < Minitest::Test
   end
 
   def test_driver_initialize_resolves_hash_overrides_from_config
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:                "https://example.com/upload",
       stream:                     StringIO.new("0123"),
       start_retry_policy:         { initial_delay: 0.1 },

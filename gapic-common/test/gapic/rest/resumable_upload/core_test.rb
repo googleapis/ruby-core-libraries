@@ -22,7 +22,7 @@ class CoreTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
 
   def setup
-    @config = CompleteUploadConfig.new(
+    @config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("test content"),
       upload_size: 2048,

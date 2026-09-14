@@ -103,7 +103,7 @@ module Gapic
           # Logs high-level protocol lifecycle milestone if configured.
           #
           # @param decision [Decision] Decision snapshot
-          # @param config [CompleteUploadConfig] Upload configuration
+          # @param config [StartUploadConfig, ResumeUploadConfig] Upload configuration
           #
           def lifecycle decision, config
             return if SILENT_RECIPES.include? decision.recipe
@@ -251,7 +251,7 @@ module Gapic
           # Extracts relevant state fields for lifecycle logging.
           #
           # @param decision [Decision] Decision snapshot
-          # @param config [CompleteUploadConfig] Upload configuration
+          # @param config [StartUploadConfig, ResumeUploadConfig] Upload configuration
           # @return [Hash] Metadata fields for log entry
           #
           def lifecycle_fields decision, config

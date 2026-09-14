@@ -100,7 +100,7 @@ class DriverProgressTest < Minitest::Test
     stub = ScriptedClientStub.new responses
 
     callback = ->(_progress) { raise CustomCallbackError, "Terminal failure in user progress handler" }
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123456789"),
       upload_size: 10,
@@ -118,7 +118,7 @@ class DriverProgressTest < Minitest::Test
   private
 
   def build_driver on_progress: nil
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123456789"),
       upload_size: 10,

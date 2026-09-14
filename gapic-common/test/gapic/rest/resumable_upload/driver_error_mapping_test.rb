@@ -40,7 +40,7 @@ class DriverErrorMappingTest < Minitest::Test
 
   def setup
     @client_stub = FailingClientStub.new
-    @config = CompleteUploadConfig.new(
+    @config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123456789"),
       upload_size: 10,

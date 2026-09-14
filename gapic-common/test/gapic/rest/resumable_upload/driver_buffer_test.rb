@@ -367,7 +367,7 @@ class DriverBufferTest < Minitest::Test
   private
 
   def build_driver stream:
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      stream,
       upload_size: 2000,

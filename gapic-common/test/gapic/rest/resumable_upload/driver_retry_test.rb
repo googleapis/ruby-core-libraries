@@ -58,7 +58,7 @@ class DriverRetryTest < Minitest::Test
       FakeResponse.new(status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: '{"done":true}')
     ]
     stub = FakeClientStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:        "https://example.com/upload",
       stream:             StringIO.new("0123"),
       upload_size:        4,
@@ -79,7 +79,7 @@ class DriverRetryTest < Minitest::Test
   def test_start_exhausts_retries_when_200_responses_continually_lack_status_header
     responses = Array.new(10) { FakeResponse.new status: 200, headers: {}, body: "" }
     stub = FakeClientStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:        "https://example.com/upload",
       stream:             StringIO.new("0123"),
       upload_size:        4,
@@ -101,7 +101,7 @@ class DriverRetryTest < Minitest::Test
   def test_start_exhausts_retries_when_non_200_responses_continually_lack_status_header
     responses = Array.new(10) { FakeResponse.new status: 503, headers: {}, body: "Service Unavailable" }
     stub = FakeClientStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url:        "https://example.com/upload",
       stream:             StringIO.new("0123"),
       upload_size:        4,
@@ -143,7 +143,7 @@ class DriverRetryTest < Minitest::Test
       FakeResponse.new(status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: '{"done":true}')
     ]
     stub = FakeClientStub.new responses
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("0123"),
       upload_size: 4,

@@ -25,7 +25,7 @@ class RulesRecoveryTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
 
   def setup
-    @config = CompleteUploadConfig.new(
+    @config = StartUploadConfig.new(
       initial_url:     "https://example.com/upload",
       initial_headers: { "X-Custom" => "value" },
       initial_body:    '{"name":"obj"}',

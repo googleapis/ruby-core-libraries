@@ -86,7 +86,7 @@ module Gapic
         # Initializes a new Resumable Upload Driver.
         #
         # @param client_stub [Gapic::Rest::ClientStub] Underlying REST client stub
-        # @param config [CompleteUploadConfig, ResumeUploadConfig] Configuration for this upload session
+        # @param config [StartUploadConfig, ResumeUploadConfig] Configuration for this upload session
         # @param core [Core, nil] Optional Core state machine (defaults to new Core with config)
         # @param logger [Logger, nil] Optional logger override
         def initialize client_stub:, config:, core: nil, logger: nil
@@ -104,7 +104,10 @@ module Gapic
                         client_id: client_stub.object_id
           @upload_log = UploadLog.new stub_logger, upload_id: "unstarted"
 
-          @start_retry_policy = resolve_retry_policy config.start_retry_policy, RetryPolicies::START_DEFAULTS
+          # Only an initiating run carries a start policy; a resumed run issues no initiation request.
+          configured_start_policy = config.is_a?(StartUploadConfig) ? config.start_retry_policy : nil
+          @start_retry_policy = resolve_retry_policy configured_start_policy, RetryPolicies::START_DEFAULTS
+
           @control_plane_retry_policy = resolve_retry_policy config.control_plane_retry_policy,
                                                              RetryPolicies::CONTROL_PLANE_DEFAULTS
           @data_plane_retry_policy = resolve_retry_policy config.data_plane_retry_policy,

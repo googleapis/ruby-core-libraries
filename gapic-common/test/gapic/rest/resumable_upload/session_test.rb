@@ -71,18 +71,29 @@ class SessionTest < Minitest::Test
     end
   end
 
+  START_ONLY_KEYS = [:initial_url, :initial_body, :initial_headers, :chunk_size, :start_retry_policy].freeze
+
+  # Builds a session from the shared arguments and remembers the per-run arguments that #start needs,
+  # so tests can keep calling `start_session session`.
   def build_session stub: nil, stream: nil, upload_size: 10, chunk_size: 4, **kwargs
     stream ||= StringIO.new "0123456789"
     stub ||= ScriptedClientStub.new
-    Session.new(
-      client_stub:  stub,
-      stream:       stream,
+    @start_args = {
       initial_url:  "https://example.com/initiate",
       initial_body: '{"name":"test.txt"}',
-      upload_size:  upload_size,
-      chunk_size:   chunk_size,
-      **kwargs
+      chunk_size:   chunk_size
+    }.merge(kwargs.slice(*START_ONLY_KEYS))
+
+    Session.new(
+      client_stub: stub,
+      stream:      stream,
+      upload_size: upload_size,
+      **kwargs.except(*START_ONLY_KEYS)
     )
+  end
+
+  def start_session session, **overrides
+    session.start(**@start_args, **overrides)
   end
 
   # ============================================================================
@@ -91,15 +102,21 @@ class SessionTest < Minitest::Test
 
   def test_initialize_mandatory_arguments
     assert_raises ArgumentError do
-      Session.new stream: StringIO.new, initial_url: "http://x"
+      Session.new stream: StringIO.new
     end
 
     assert_raises ArgumentError do
-      Session.new client_stub: ScriptedClientStub.new, initial_url: "http://x"
+      Session.new client_stub: ScriptedClientStub.new
+    end
+  end
+
+  def test_initialize_rejects_per_run_arguments
+    assert_raises ArgumentError do
+      Session.new client_stub: ScriptedClientStub.new, stream: StringIO.new, initial_url: "http://x"
     end
 
     assert_raises ArgumentError do
-      Session.new client_stub: ScriptedClientStub.new, stream: StringIO.new
+      Session.new client_stub: ScriptedClientStub.new, stream: StringIO.new, chunk_size: 4
     end
   end
 
@@ -107,21 +124,83 @@ class SessionTest < Minitest::Test
     session = Session.new(
       client_stub: ScriptedClientStub.new,
       stream:      StringIO.new("abc"),
-      initial_url: "https://example.com/initiate",
       upload_size: 300
     )
 
     assert_equal 300, session.upload_size
-    assert_nil session.initial_body
-    assert_equal({}, session.initial_headers)
-    assert_nil session.chunk_size
     assert_nil session.content_type
     assert_nil session.timeout
-    assert_nil session.start_retry_policy
     assert_nil session.control_plane_retry_policy
     assert_nil session.data_plane_retry_policy
     assert_nil session.on_progress
     assert_nil session.logger
+  end
+
+  def test_start_without_initial_url_raises_argument_error
+    session = Session.new client_stub: ScriptedClientStub.new, stream: StringIO.new("abc"), upload_size: 3
+
+    error = assert_raises ArgumentError do
+      session.start
+    end
+    assert_match(/initial_url/, error.message)
+  end
+
+  def test_start_with_blank_initial_url_raises_argument_error
+    session = Session.new client_stub: ScriptedClientStub.new, stream: StringIO.new("abc"), upload_size: 3
+
+    error = assert_raises ArgumentError do
+      session.start initial_url: "   "
+    end
+    assert_match(/initial_url is required/, error.message)
+  end
+
+  def test_start_with_malformed_retry_policy_raises_argument_error
+    session = build_session
+
+    error = assert_raises ArgumentError do
+      start_session session, start_retry_policy: "nonsense"
+    end
+    assert_match(/Expected RetryPolicy, Hash, or nil/, error.message)
+  end
+
+  def test_failed_start_leaves_session_reusable
+    session = build_session
+
+    assert_raises ArgumentError do
+      start_session session, start_retry_policy: "nonsense"
+    end
+
+    refute session.running?
+    refute session.bound?
+  end
+
+  def test_resume_needs_no_initiation_arguments
+    responses = [
+      FakeResponse.new(
+        status:  200,
+        headers: {
+          "x-goog-upload-status"        => "active",
+          "x-goog-upload-size-received" => "0"
+        },
+        body:    ""
+      ),
+      FakeResponse.new(
+        status:  200,
+        headers: { "x-goog-upload-status" => "final" },
+        body:    '{"resumed":true}'
+      )
+    ]
+    session = Session.new(
+      client_stub: ScriptedClientStub.new(responses),
+      stream:      StringIO.new("01"),
+      upload_size: 2
+    )
+    handle = ResumeHandle.new upload_url: "https://upload.example.com/persisted", chunk_size: 4
+
+    result = session.resume resume_handle: handle
+
+    assert_equal '{"resumed":true}', result
+    assert_equal "https://upload.example.com/persisted", session.upload_url
   end
 
   # ============================================================================
@@ -176,7 +255,7 @@ class SessionTest < Minitest::Test
     stub = ScriptedClientStub.new responses
     session = build_session stub: stub, upload_size: 10, chunk_size: 4
 
-    result = session.start
+    result = start_session session
 
     assert_equal '{"status":"completed"}', result
     assert session.bound?
@@ -209,12 +288,12 @@ class SessionTest < Minitest::Test
       upload_size: 2,
       chunk_size:  4
     )
-    session.start
+    start_session session
 
     assert session.bound?
 
     err = assert_raises SessionStateError do
-      session.start
+      start_session session
     end
     assert_includes err.message, "Session has already executed a run"
   end
@@ -242,7 +321,7 @@ class SessionTest < Minitest::Test
       upload_size: 2,
       chunk_size:  4
     )
-    session.start
+    start_session session
 
     handle = ResumeHandle.new upload_url: "https://upload.example.com/session_1", chunk_size: 4
     err = assert_raises SessionStateError do
@@ -329,7 +408,7 @@ class SessionTest < Minitest::Test
 
     assert session.bound?
     err = assert_raises SessionStateError do
-      session.start
+      start_session session
     end
     assert_includes err.message, "Session has already executed a run"
   end
@@ -452,7 +531,7 @@ class SessionTest < Minitest::Test
 
     session1 = build_session stub: stub1, stream: stream, upload_size: 10, chunk_size: 4
     raised = assert_raises RequestFailedError do
-      session1.start
+      start_session session1
     end
 
     assert session1.bound?
@@ -533,7 +612,7 @@ class SessionTest < Minitest::Test
     )
 
     worker = Thread.new do
-      session.start
+      start_session session
     end
 
     started_q.pop # wait for worker thread to enter driver.run
@@ -547,7 +626,7 @@ class SessionTest < Minitest::Test
     assert_includes err.message, "A run is already in progress for this session"
 
     err_start = assert_raises SessionStateError do
-      session.start
+      start_session session
     end
     assert_includes err_start.message, "A run is already in progress for this session"
 
@@ -565,7 +644,7 @@ class SessionTest < Minitest::Test
 
   def test_driver_upload_url_across_statuses
     dummy_client = ScriptedClientStub.new
-    config = CompleteUploadConfig.new(
+    config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
       stream:      StringIO.new("data"),
       upload_size: 4,

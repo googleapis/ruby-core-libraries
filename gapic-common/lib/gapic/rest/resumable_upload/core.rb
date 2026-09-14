@@ -42,7 +42,7 @@ module Gapic
         # @private
         # Initializes a Core state machine container.
         #
-        # @param config [CompleteUploadConfig] Upload session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Upload session configuration
         #
         def initialize config
           @config = config

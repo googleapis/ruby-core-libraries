@@ -320,7 +320,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Object] Input event
-        # @param config [CompleteUploadConfig] Static configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Static configuration
         # @return [Decision] Decision snapshot
         #
         # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
@@ -404,7 +404,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Object] Input event
-        # @param config [CompleteUploadConfig] Static configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Static configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.step state, event, config
           decision = decide state, event, config
@@ -417,7 +417,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig] Session configuration; only an initiating run reaches this recipe
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.start_session state, _event, config
           next_state = state.with status: :starting
@@ -466,7 +466,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Initiation response
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.begin_transmission state, event, config
           granularity_str = header_value event.headers, "x-goog-upload-chunk-granularity"
@@ -495,7 +495,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::ChunkRead] Chunk read event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.send_chunk state, event, _config
           next_state = state.with(
@@ -519,7 +519,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::ChunkRead] Chunk read event with EOF
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.send_upload_finalize state, event, config
           next_state = state.with(
@@ -545,7 +545,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.send_finalize state, _event, config
           next_state = state.with(
@@ -566,7 +566,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.ack_chunk state, _event, config
           new_offset = state.offset + state.in_flight_length
@@ -590,7 +590,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.enter_recovery state, _event, config
           next_state = state.with(
@@ -611,7 +611,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.retry_recovery state, _event, _config
           next_state = state.with(
@@ -627,7 +627,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Final HTTP response
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.complete_upload_with_data state, event, _config
           new_offset = state.offset + state.in_flight_length
@@ -650,7 +650,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Final HTTP response
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.complete_upload_finalized state, event, _config
           next_state = state.with(
@@ -671,7 +671,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Query response containing acknowledged offset
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.realign_from_recovery state, event, config
           server_offset_str = header_value event.headers, "x-goog-upload-size-received"
@@ -696,7 +696,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Object] Cancellation response event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.complete_cancellation state, event, _config
           err = UploadCancelledError.from event
@@ -710,7 +710,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.ignore_duplicate_cancel state, _event, _config
           [state, []]
@@ -722,7 +722,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param config [CompleteUploadConfig] Session configuration
+        # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.cancel_session state, _event, config
           next_state = state.with status: :cancelling
@@ -754,7 +754,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.fail_with_deadline_exceeded state, _event, _config
           handle = resume_handle_from state
@@ -773,7 +773,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Rejected HTTP response
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.fail_with_rejected state, event, _config
           err = UploadRejectedError.from event
@@ -791,7 +791,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Fatal HTTP response
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.fail_with_bad_response state, event, _config
           handle = resume_handle_from state
@@ -810,7 +810,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Event::RequestFailed] Request failure event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.fail_with_request_error state, event, _config
           handle = resume_handle_from state
@@ -829,7 +829,7 @@ module Gapic
         #
         # @param state [State] Current state
         # @param event [Object] Dispatched event
-        # @param _config [CompleteUploadConfig] Session configuration
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @raise [InvalidTransitionError]
         def self.fail_with_unmatched_transition state, event, _config
           shape = shape_of event
