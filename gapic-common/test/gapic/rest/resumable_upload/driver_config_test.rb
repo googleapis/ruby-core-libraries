@@ -200,6 +200,22 @@ class DriverConfigTest < Minitest::Test
     end
   end
 
+  def test_start_headers_derives_content_descriptors_from_config
+    config = StartUploadConfig.new(
+      initial_url:  "https://example.com/upload",
+      stream:       StringIO.new("0123"),
+      upload_size:  4,
+      content_type: "application/octet-stream"
+    )
+    driver = Driver.new client_stub: FakeClientStub.new, config: config
+    instruction = Instruction::SendStart.new url: "https://example.com/upload"
+
+    headers = driver.send :start_headers, instruction
+
+    assert_equal "application/octet-stream", headers["X-Goog-Upload-Header-Content-Type"]
+    assert_equal "4", headers["X-Goog-Upload-Header-Content-Length"]
+  end
+
   def test_start_headers_passes_unrelated_caller_headers_through
     config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("0123")
     driver = Driver.new client_stub: FakeClientStub.new, config: config

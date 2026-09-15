@@ -255,7 +255,7 @@ module Gapic
         #   place.
         # @return [String, Object] Final response body upon completion
         # @raise [ArgumentError] If `initial_url` is missing or blank, if `initial_headers` sets a
-        #   reserved x-goog-upload-* header, or if a retry policy argument is neither a
+        #   reserved `x-goog-upload-*` header, or if a retry policy argument is neither a
         #   {Gapic::Common::RetryPolicy}, a Hash, nor `nil`
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
         # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs

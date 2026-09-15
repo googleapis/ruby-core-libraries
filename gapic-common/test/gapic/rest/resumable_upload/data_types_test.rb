@@ -79,8 +79,8 @@ class DataTypesTest < Minitest::Test
   def test_start_upload_config_allows_caller_owned_initial_headers
     stream = StringIO.new "content"
     headers = {
-      "Authorization" => "Bearer token",
-      "X-Custom"      => "value"
+      "X-Goog-Test-Scenario" => "chunk_granularity",
+      "X-Custom"             => "value"
     }
 
     config = StartUploadConfig.new initial_url: "https://example.com", stream: stream, initial_headers: headers

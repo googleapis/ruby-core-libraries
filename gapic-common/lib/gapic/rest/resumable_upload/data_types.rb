@@ -100,7 +100,9 @@ module Gapic
         # @param initial_url [String] Initial endpoint URI for session initiation
         # @param stream [IO] Binary input stream to upload
         # @param initial_body [String, nil] Request payload for session initiation
-        # @param initial_headers [Hash<String, String>] Additional headers for initiation
+        # @param initial_headers [Hash<String, String>] Additional headers for initiation. Keys beginning
+        #   with {RESERVED_INITIAL_HEADER_PREFIX} are rejected in any casing; use `content_type` and
+        #   `upload_size` to shape those.
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
         # @param chunk_size [Integer, nil] Requested chunk size in bytes
         # @param content_type [String, nil] MIME type of uploaded media
