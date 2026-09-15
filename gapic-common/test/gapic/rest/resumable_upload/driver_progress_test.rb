@@ -115,6 +115,54 @@ class DriverProgressTest < Minitest::Test
     assert_equal "Terminal failure in user progress handler", err.message
   end
 
+  def test_completed_progress_reports_total_bytes_when_upload_size_unknown
+    responses = [
+      FakeResponse.new(
+        status:  200,
+        headers: { "x-goog-upload-url" => "https://example.com/upload/123", "x-goog-upload-status" => "active" },
+        body:    ""
+      ),
+      FakeResponse.new(
+        status:  200,
+        headers: { "x-goog-upload-status" => "active" },
+        body:    ""
+      ),
+      FakeResponse.new(
+        status:  200,
+        headers: { "x-goog-upload-status" => "active" },
+        body:    ""
+      ),
+      FakeResponse.new(
+        status:  200,
+        headers: { "x-goog-upload-status" => "final" },
+        body:    "{\"done\":true}"
+      )
+    ]
+    stub = ScriptedClientStub.new responses
+
+    progress_events = []
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("0123456789"),
+      upload_size: nil,
+      chunk_size:  4,
+      on_progress: ->(progress) { progress_events << progress }
+    )
+    driver = Driver.new client_stub: stub, config: config
+
+    result = driver.run
+    assert_equal "{\"done\":true}", result
+
+    uploading_snapshots = progress_events.select { |p| p.phase == :uploading }
+    refute_empty uploading_snapshots
+    assert uploading_snapshots.all? { |p| p.total_bytes.nil? }
+
+    completed_snapshot = progress_events.last
+    assert_equal :completed, completed_snapshot.phase
+    assert_equal 10, completed_snapshot.bytes_uploaded
+    assert_equal 10, completed_snapshot.total_bytes
+  end
+
   private
 
   def build_driver on_progress: nil

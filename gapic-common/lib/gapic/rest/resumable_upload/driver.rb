@@ -65,7 +65,7 @@ module Gapic
         # Returns a {ResumeHandle} representing the current upload session parameters.
         # Reading this property mid-run provides a best-effort snapshot of the current session state.
         # Completed uploads (`:success`), rejected uploads (`:rejected`), and cancelled uploads
-        # (`:cancelled`) are finalized and not resumable, returning `nil`. Completed uploads are not resumable.
+        # (`:cancelled`) are finalized and not resumable, returning `nil`.
         #
         # @return [ResumeHandle, nil] Resume handle if upload URL is established and resumable, or nil
         def resume_handle
@@ -304,6 +304,8 @@ module Gapic
         def resolve_timeout
           return @config.timeout if @config.timeout&.positive?
 
+          # When timeout is unset, BASE_TIMEOUT (1 hour) acts as a floor so small uploads still get
+          # a full hour while large uploads scale past it at MIN_ASSUMED_THROUGHPUT (1 MiB/s).
           if @config.upload_size
             [@config.upload_size.fdiv(MIN_ASSUMED_THROUGHPUT), BASE_TIMEOUT].max
           else
@@ -531,7 +533,8 @@ module Gapic
             err = BadResponseError.new "Missing X-Goog-Upload-Status header in start response",
                                        event.status,
                                        headers: event.headers
-            can_retry = policy.send(:retry_with_deadline?) && policy.call(event)
+            # `retry_with_deadline?` is public; its `@private` tag hides it from docs, not from callers.
+            can_retry = policy.retry_with_deadline? && policy.call(event)
             unless can_retry
               if event.status == 200
                 failed_event = Event::RequestFailed.new(

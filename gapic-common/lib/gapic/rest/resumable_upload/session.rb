@@ -78,6 +78,36 @@ module Gapic
       # * `timeout` defaults to `upload_size / 1 MB per second` when `upload_size` is known, floored at one
       #   hour, and to one hour flat when it is not.
       #
+      # ### Retry Policies
+      #
+      # Retry behavior is partitioned across three policies: `start_retry_policy` on {#start}, and
+      # `control_plane_retry_policy` and `data_plane_retry_policy` on {#initialize}.
+      #
+      # Passing a {Gapic::Common::RetryPolicy} replaces the corresponding default policy outright. Passing a
+      # Hash overrides only the keys it names and leaves the remaining defaults — including `retry_codes` and
+      # any status-header predicates — in place.
+      #
+      # All three policies share the same default retry codes and exponential backoff settings:
+      #
+      # | Setting | Default |
+      # |---|---|
+      # | `retry_codes` | `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, `INTERNAL` |
+      # | `initial_delay` | `1.0` s |
+      # | `max_delay` | `15.0` s |
+      # | `multiplier` | `1.3` |
+      #
+      # They differ in which requests they govern and how a missing or empty `X-Goog-Upload-Status` response
+      # header is treated:
+      #
+      # | Policy | Governs | Missing status header |
+      # |---|---|---|
+      # | `start_retry_policy` | session initiation | **Retriable** on any status (incl. `200`), unless fatal |
+      # | `control_plane_retry_policy` | `query` and `cancel` | No predicate; decided on `retry_codes` alone |
+      # | `data_plane_retry_policy` | `upload` and `finalize` | **Not** retriable |
+      #
+      # Initiation treats a response missing `X-Goog-Upload-Status` as gateway noise worth retrying; the data
+      # plane treats it as a response it cannot interpret and refuses to replay bytes against it.
+      #
       class Session
         # @return [Gapic::Rest::ClientStub] Underlying REST client stub
         attr_reader :client_stub
@@ -144,8 +174,10 @@ module Gapic
         # @param timeout [Numeric, nil] Total upload timeout in seconds covering the whole run. When `nil`,
         #   resolves to `upload_size / 1 MB per second` floored at one hour if `upload_size` is known, and to
         #   one hour flat otherwise.
-        # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Control retry policy
-        # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Data retry policy
+        # @param control_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for control
+        #   commands (`query` and `cancel`). See the "Retry Policies" section in the class documentation.
+        # @param data_plane_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for data
+        #   commands (`upload` and `finalize`). See the "Retry Policies" section in the class documentation.
         # @param on_progress [Proc, nil] Progress callback invoked as `->(progress)` with a {Progress} instance.
         #   Executed synchronously on the upload protocol thread; it must not block.
         #   Exceptions raised inside the callback abort the session and propagate out of {#start} or {#resume}.
@@ -250,9 +282,7 @@ module Gapic
         #   size is rounded down to a multiple of any chunk granularity the server requires, or raised to that
         #   granularity if it exceeds the requested size.
         # @param start_retry_policy [Gapic::Common::RetryPolicy, Hash, nil] Retry policy for the initiation
-        #   request. A {Gapic::Common::RetryPolicy} replaces the default policy outright; a Hash overrides only
-        #   the settings it names and leaves the remaining defaults, including retry codes and predicates, in
-        #   place.
+        #   request (`start`). See the "Retry Policies" section in the class documentation.
         # @return [String, nil] Raw, undecoded body of the finalizing HTTP response (or `nil` if the
         #   response carried no body), typically the JSON resource the backend created that the caller
         #   parses. A client stub carrying response-decoding middleware is outside the contract.

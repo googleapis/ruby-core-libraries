@@ -231,7 +231,9 @@ module Gapic
       #     server-confirmed offset and is not guaranteed to be monotonic — a server rewind during
       #     recovery can decrease this value.
       # @!attribute [r] total_bytes
-      #   @return [Integer, nil] Total upload size in bytes if known, or nil
+      #   @return [Integer, nil] Total upload size in bytes if known, or `nil`. Always set on the
+      #     `:completed` phase — the total is known once the transfer finishes, even when `upload_size`
+      #     was not supplied upfront.
       #
       Progress = Data.define(
         :phase,

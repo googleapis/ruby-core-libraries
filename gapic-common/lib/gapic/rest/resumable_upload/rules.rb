@@ -646,6 +646,7 @@ module Gapic
             offset:           new_offset,
             in_flight_length: 0
           )
+          # `total_bytes` is set from `new_offset` even when `config.upload_size` is nil (see `Progress#total_bytes`).
           progress = Progress.new phase: :completed, bytes_uploaded: new_offset, total_bytes: new_offset
           instructions = [
             Instruction::NotifyProgress.new(progress: progress),
@@ -667,6 +668,8 @@ module Gapic
             status:           :success,
             in_flight_length: 0
           )
+          # `total_bytes` is set from `next_state.offset` even when `config.upload_size` is nil
+          # (see `Progress#total_bytes`).
           progress = Progress.new phase: :completed, bytes_uploaded: next_state.offset, total_bytes: next_state.offset
           instructions = [
             Instruction::NotifyProgress.new(progress: progress),
@@ -736,7 +739,7 @@ module Gapic
         # @private
         # Extracts a {ResumeHandle} from current protocol state.
         # Completed uploads (`:success`), rejected uploads (`:rejected`), and cancelled uploads
-        # (`:cancelled`) are finalized and not resumable, returning `nil`. Completed uploads are not resumable.
+        # (`:cancelled`) are finalized and not resumable, returning `nil`.
         #
         # @param state [State] Protocol state
         # @return [ResumeHandle, nil] Resume handle if upload URL is established and resumable, or nil
