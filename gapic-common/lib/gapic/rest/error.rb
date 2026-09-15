@@ -22,6 +22,7 @@ module Gapic
   module Rest
     # Gapic REST exception class
     class Error < ::Gapic::Common::Error
+      # @private
       REST_ERROR_PREFIX = "An error has occurred when making a REST request".freeze
 
       # @return [Integer, nil] the http status code for the error
