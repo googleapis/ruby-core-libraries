@@ -28,7 +28,7 @@ expand :yardoc do |t|
   t.fail_on_undocumented_objects = false # TODO: Fix so this can be enabled
   t.bundler = true
 end
-alias_tool :yard, :yardoc
+tool :yard, delegate_relative: :yardoc
 
 expand :gem_build
 
