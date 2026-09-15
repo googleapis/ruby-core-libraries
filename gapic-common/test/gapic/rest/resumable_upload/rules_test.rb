@@ -173,10 +173,11 @@ class RulesTest < Minitest::Test
     assert_equal Progress.new(phase: :cancelling, bytes_uploaded: 0, total_bytes: 1024), instructions[0].progress
     assert_instance_of Instruction::SendCancel, instructions[1]
 
-    # Duplicate cancel in cancelling state does nothing
+    # A duplicate cancel re-enters cancel_session through the wildcard arm and re-issues the command
     dup_state, dup_instructions = Rules.step next_state, Event::Cancel.new, @config
     assert_equal :cancelling, dup_state.status
-    assert_empty dup_instructions
+    assert_equal 2, dup_instructions.size
+    assert_instance_of Instruction::SendCancel, dup_instructions[1]
 
     # Cancellation confirmed
     resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
@@ -190,6 +191,87 @@ class RulesTest < Minitest::Test
   def test_all_recipes_respond_to_rules_method
     Rules::RECIPES.each do |recipe|
       assert_respond_to Rules, recipe
+    end
+  end
+
+  def test_all_recipes_satisfy_trampoline_invariant
+    resume_config = ResumeUploadConfig.new(
+      upload_url: "https://example.com/session",
+      chunk_size: 256,
+      stream:     StringIO.new("abcd")
+    )
+    active_resp = Event::HttpResponse.new status: 200, headers: {
+      "x-goog-upload-url"           => "https://example.com/session",
+      "x-goog-upload-status"        => "active",
+      "x-goog-upload-size-received" => "256"
+    }
+    final_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "final" }
+    cancelled_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+    cat2_resp = Event::HttpResponse.new status: 503, headers: {}
+    rejected_resp = Event::HttpResponse.new status: 403, headers: { "x-goog-upload-status" => "final" }
+    bad_resp = Event::HttpResponse.new status: 401, headers: {}
+    req_err = Event::RequestFailed.new kind: :connection_failed, message: "connection lost"
+    chunk_full = Event::ChunkRead.new bytes_buffered: 256, eof: false
+    chunk_eof = Event::ChunkRead.new bytes_buffered: 256, eof: true
+    base_state = State.new(
+      status:           :transmission_sending,
+      upload_url:       "https://example.com/session",
+      chunk_size:       256,
+      in_flight_length: 256
+    )
+
+    fixtures = {
+      start_session:                  [State.new(status: :initializing), Event::StartUpload.new, @config],
+      resume_session:                 [State.new(status: :initializing), Event::ResumeUpload.new, resume_config],
+      begin_transmission:             [State.new(status: :starting), active_resp, @config],
+      send_chunk:                     [base_state.with(status: :transmission_reading), chunk_full, @config],
+      send_upload_finalize:           [base_state.with(status: :transmission_reading), chunk_eof, @config],
+      send_finalize:                  [base_state.with(status: :transmission_reading), Event::ChunkRead.new(bytes_buffered: 0, eof: true), @config],
+      ack_chunk:                      [base_state, active_resp, @config],
+      enter_recovery:                 [base_state, cat2_resp, @config],
+      retry_recovery:                 [base_state.with(status: :recovery), cat2_resp, @config],
+      realign_from_recovery:          [base_state.with(status: :recovery), active_resp, @config],
+      complete_upload_with_data:      [base_state.with(status: :finalizing_sending_upload), final_resp, @config],
+      complete_upload_finalized:      [base_state.with(status: :finalizing_sending_finalize), final_resp, @config],
+      cancel_session:                 [base_state, Event::Cancel.new, @config],
+      complete_cancellation:          [base_state.with(status: :cancelling), cancelled_resp, @config],
+      fail_with_deadline_exceeded:    [base_state, Event::GlobalDeadlineExceeded.new, @config],
+      fail_with_rejected:             [base_state, rejected_resp, @config],
+      fail_with_bad_response:         [base_state, bad_resp, @config],
+      fail_with_request_error:        [base_state, req_err, @config],
+      fail_with_unmatched_transition: [State.new(status: :success), Event::StartUpload.new, @config]
+    }
+
+    assert_equal Rules::RECIPES.sort, fixtures.keys.sort
+
+    event_producing_types = [
+      Instruction::FillBuffer,
+      Instruction::SendStart,
+      Instruction::SendChunk,
+      Instruction::SendFinalize,
+      Instruction::SendQuery,
+      Instruction::SendCancel
+    ].freeze
+    terminal_types = [
+      Instruction::TerminateSuccess,
+      Instruction::TerminateFailure
+    ].freeze
+
+    fixtures.each do |recipe, (state, event, cfg)|
+      if recipe == :fail_with_unmatched_transition
+        assert_raises InvalidTransitionError do
+          Rules.public_send recipe, state, event, cfg
+        end
+        next
+      end
+
+      _next_state, instructions = Rules.public_send recipe, state, event, cfg
+      event_producing_count = instructions.count { |inst| event_producing_types.include? inst.class }
+      terminal_count = instructions.count { |inst| terminal_types.include? inst.class }
+
+      valid = (event_producing_count == 1 && terminal_count.zero?) ||
+              (event_producing_count.zero? && terminal_count == 1)
+      assert valid, "Recipe :#{recipe} produced #{event_producing_count} event-producing and #{terminal_count} terminal instructions"
     end
   end
 end

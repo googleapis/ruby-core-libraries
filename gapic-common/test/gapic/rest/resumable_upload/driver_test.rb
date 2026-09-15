@@ -227,6 +227,76 @@ class DriverTest < Minitest::Test
     assert_equal 2, stub.requests.size
   end
 
+  # Fake Core yielding a fixed Decision to test Driver#run invariant guards.
+  class FakeCore
+    attr_reader :state, :last_decision
+
+    def initialize decision
+      @decision = decision
+      @state = decision.next_state
+      @last_decision = nil
+    end
+
+    def dispatch _event
+      @last_decision = @decision
+      @decision.instructions
+    end
+  end
+
+  def test_run_raises_internal_error_on_empty_batch
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("data"),
+      upload_size: 4
+    )
+    decision = Decision.new(
+      from_status:  :initializing,
+      shape:        :start_upload,
+      recipe:       :broken_empty,
+      next_state:   State.new(status: :starting),
+      instructions: []
+    )
+    driver = Driver.new client_stub: FakeClientStub.new([]), config: config, core: FakeCore.new(decision)
+
+    err = assert_raises InternalError do
+      driver.run
+    end
+    assert_equal "Resumable upload internal error: recipe :broken_empty " \
+                 "produced no continuation event and did not terminate",
+                 err.message
+  end
+
+  def test_run_raises_internal_error_on_multiple_continuation_events
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("data"),
+      upload_size: 4
+    )
+    send_start = Instruction::SendStart.new url: "https://example.com/upload", headers: {}, body: ""
+    decision = Decision.new(
+      from_status:  :initializing,
+      shape:        :start_upload,
+      recipe:       :broken_multi,
+      next_state:   State.new(status: :starting),
+      instructions: [send_start, send_start]
+    )
+    resp = FakeResponse.new(
+      status:  200,
+      headers: {
+        "X-Goog-Upload-URL"    => "https://example.com/session/1",
+        "X-Goog-Upload-Status" => "active"
+      },
+      body:    ""
+    )
+    driver = Driver.new client_stub: FakeClientStub.new([resp, resp]), config: config, core: FakeCore.new(decision)
+
+    err = assert_raises InternalError do
+      driver.run
+    end
+    assert_equal "Resumable upload internal error: recipe :broken_multi produced multiple continuation events",
+                 err.message
+  end
+
   private
 
   def build_scripted_responses

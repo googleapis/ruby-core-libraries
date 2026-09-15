@@ -283,7 +283,7 @@ flowchart TD
   * Emits `DEBUG` entries containing `uploadId`, `fromStatus`, `shape`, `recipe`, `toStatus`, `offset`, `inFlightLength`, and abridged `instructions`.
 * **Lifecycle milestone logging (`UploadLog#lifecycle`)**:
   * Emits `INFO` entries for session milestones (`:start_session` with `uploadSize` and `requestedChunkSize`), `DEBUG` for per-chunk transmission (`:send_chunk`), and `WARN` for terminal failures (`:fail_with_rejected` with `error` field).
-  * Asserts silent recipes (`:ignore_duplicate_cancel`, `:ack_chunk`) emit no lifecycle log entries.
+  * Asserts silent recipes (`:ack_chunk`) emit no lifecycle log entries.
 * **Wire trace logging (`wire_send`, `wire_receive`, `wire_failure`)**:
   * `wire_send` logs `DEBUG` with HTTP verb, abridged URL, redacted headers, `startAttempt`, `bodySize`, and hex-encoded/abridged body.
   * `wire_receive` logs `DEBUG` with HTTP status code, parsed `uploadStatus`, optional `errorStatus` from `event.error.status`, `sizeReceived`, `granularity`, and abridged body (using `event.error.message` when HTTP $\ge 400$ and present).

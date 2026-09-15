@@ -551,6 +551,14 @@ module Gapic
       #
       class SessionStateError < Gapic::Common::Error
       end
+
+      ##
+      # Raised when an internal state machine or driver invariant is violated
+      # (e.g. a recipe batch producing zero continuation events without terminating,
+      # or producing multiple continuation events).
+      #
+      class InternalError < Gapic::Common::Error
+      end
     end
   end
 end

@@ -32,7 +32,6 @@ module Gapic
           # @return [Array<Symbol>]
           SILENT_RECIPES = [
             :ack_chunk,                     # per-chunk transition, doesn't belong at INFO
-            :ignore_duplicate_cancel,       # duplicate cancel signal, no state change
             :fail_with_unmatched_transition # raises before Decision exists, logged by #unmatched_transition
           ].freeze
 

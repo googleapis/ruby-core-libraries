@@ -591,7 +591,7 @@ Because `Rules` is a pure decision engine and `Core` is a side-effect-free state
 Each invocation of `Driver#run` generates a fresh UUIDv4 session identifier (`uploadId`) that is attached to every log entry emitted during that run. Structured log entries are constructed using `Gapic::LoggingConcerns` (`StubLogger` yielding a `LogEntryBuilder` producing `Google::Logging::Message` instances). Machine-readable state and telemetry are stored in `Google::Logging::Message#fields`, allowing log message text to evolve independently without breaking structured queries.
 
 ### 7.2 Log Level & Recipe Mapping
-The `Driver` emits structured logs across three severity levels (`INFO`, `DEBUG`, `WARN`). High-frequency per-chunk acknowledgements (`:ack_chunk`) and duplicate cancellation signals (`:ignore_duplicate_cancel`) are suppressed from `INFO` lifecycle logs to avoid log volume bloat on multi-gigabyte uploads.
+The `Driver` emits structured logs across three severity levels (`INFO`, `DEBUG`, `WARN`). High-frequency per-chunk acknowledgements (`:ack_chunk`) are suppressed from `INFO` lifecycle logs to avoid log volume bloat on multi-gigabyte uploads.
 
 | Severity | Category | Trigger / Recipe | Message Summary |
 | :--- | :--- | :--- | :--- |

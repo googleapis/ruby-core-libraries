@@ -106,9 +106,10 @@ class UploadLogTest < Minitest::Test
   end
 
   def test_lifecycle_silent_recipes_emit_no_logs
-    state = State.new status: :cancelling
-    decision = Rules.decide state, Event::Cancel.new, @config
-    assert_equal :ignore_duplicate_cancel, decision.recipe
+    state = State.new status: :transmission_sending
+    active = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "active" }
+    decision = Rules.decide state, active, @config
+    assert_equal :ack_chunk, decision.recipe
 
     @upload_log.lifecycle decision, @config
 

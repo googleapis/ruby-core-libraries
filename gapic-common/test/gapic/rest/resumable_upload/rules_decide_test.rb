@@ -231,14 +231,14 @@ class RulesDecideTest < Minitest::Test
     assert_instance_of Instruction::TerminateFailure, decision.instructions.first
   end
 
-  def test_row_cancelling_user_cancel
+  def test_row_cancelling_user_cancel_falls_through_to_wildcard
     decision = Rules.decide State.new(status: :cancelling), Event::Cancel.new, @config
     assert_equal :cancelling, decision.from_status
     assert_equal :user_cancel, decision.shape
-    assert_equal :ignore_duplicate_cancel, decision.recipe
+    assert_equal :cancel_session, decision.recipe
     assert_equal :cancelling, decision.next_state.status
     assert_recipe_progress_notification decision
-    assert_empty decision.instructions
+    assert_instance_of Instruction::SendCancel, decision.instructions[1]
   end
 
   def test_row_global_deadline_exceeded

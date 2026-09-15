@@ -42,6 +42,21 @@ module Gapic
       # `[next_state, instructions]`. Adding a protocol behaviour means adding a shape, a recipe and an arm.
       # It never means adding branching to the Driver.
       #
+      # ### Trampoline invariant
+      #
+      # {Driver#run} executes as a synchronous trampoline loop, so every recipe in {RECIPES} must return an
+      # instruction batch that yields either:
+      #
+      # 1. **Exactly one** event-producing instruction (`FillBuffer` or `Send*`) and zero terminal instructions, or
+      # 2. **Exactly one** terminal instruction (`TerminateSuccess` or `TerminateFailure`) and zero event-producing
+      #    instructions.
+      #
+      # A recipe returning zero event-producing instructions without terminating stalls the loop, and a recipe
+      # returning multiple event-producing instructions discards continuation events. Note that
+      # {Instruction::RealignBuffer} (emitted by `:ack_chunk` and `:realign_from_recovery`) returns an `Integer`
+      # stream offset from `execute_realign_buffer` rather than an event object; changing that return value to an
+      # event-shaped object would violate the single-continuation-event invariant.
+      #
       # ### State transition graph
       #
       # ```mermaid
@@ -243,7 +258,6 @@ module Gapic
           :complete_upload_finalized,
           :cancel_session,
           :complete_cancellation,
-          :ignore_duplicate_cancel,
           :fail_with_deadline_exceeded,
           :fail_with_rejected,
           :fail_with_bad_response,
@@ -277,7 +291,6 @@ module Gapic
           :send_chunk,
           :retry_recovery,
           :complete_cancellation,
-          :ignore_duplicate_cancel,
           :fail_with_deadline_exceeded,
           :fail_with_rejected,
           :fail_with_bad_response,
@@ -357,8 +370,6 @@ module Gapic
                      :retry_recovery
                    in [:cancelling, :response_cancelled]
                      :complete_cancellation
-                   in [:cancelling, :user_cancel]
-                     :ignore_duplicate_cancel
                    # Order matters from here down. These two catch-alls must stay above the failure arms below,
                    # so that an expired deadline or a cancellation wins over a late failure response arriving
                    # in the same states.
@@ -702,18 +713,6 @@ module Gapic
           err = UploadCancelledError.from event
           next_state = state.with status: :cancelled, in_flight_length: 0, last_error: err
           [next_state, [Instruction::TerminateFailure.new(error: err)]]
-        end
-
-        ##
-        # @private
-        # Ignores redundant cancel signal when cancellation is already in progress.
-        #
-        # @param state [State] Current state
-        # @param _event [Object] Dispatched event
-        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
-        # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
-        def self.ignore_duplicate_cancel state, _event, _config
-          [state, []]
         end
 
         ##

@@ -147,6 +147,13 @@ module Gapic
         # Establishes a guaranteed monotonic deadline at the start of execution
         # so the upload cannot stall indefinitely.
         #
+        # Assumes the trampoline loop invariant: each dispatched instruction batch
+        # produces either a single continuation event or terminates the session
+        # (via {Instruction::TerminateSuccess} or {Instruction::TerminateFailure}).
+        # Note that {Instruction::RealignBuffer} returns an `Integer` stream offset
+        # rejected by {#pending_event_type?}, keeping `:ack_chunk` and
+        # `:realign_from_recovery` single-event batches.
+        #
         # @return [String, nil] Final response body
         def run
           @upload_log = UploadLog.new stub_logger, upload_id: LoggingConcerns.random_uuid4
@@ -155,21 +162,49 @@ module Gapic
 
           loop do
             instructions = dispatch_event pending_event
-            pending_event = nil
 
             if deadline_exceeded? && !terminal_instructions?(instructions)
               instructions = dispatch_event Event::GlobalDeadlineExceeded.new
             end
 
-            instructions.each do |instruction|
-              result = dispatch_instruction instruction
-              pending_event = result if pending_event_type? result
-              return result if instruction.is_a? Instruction::TerminateSuccess
-            end
+            pending_event, terminal_result = execute_batch instructions
+            return terminal_result if pending_event.nil?
           end
         end
 
         private
+
+        ##
+        # @private
+        # Executes an instruction batch and enforces the single-continuation-event invariant.
+        #
+        # @param instructions [Array<Object>] Emitted instructions
+        # @return [Array<Object, nil>] Tuple of [pending_event, terminal_result]
+        #
+        def execute_batch instructions
+          pending_event = nil
+          recipe = @core.last_decision&.recipe
+
+          instructions.each do |instruction|
+            result = dispatch_instruction instruction
+            return [nil, result] if instruction.is_a? Instruction::TerminateSuccess
+            next unless pending_event_type? result
+
+            if pending_event
+              raise InternalError,
+                    "Resumable upload internal error: recipe :#{recipe} produced multiple continuation events"
+            end
+            pending_event = result
+          end
+
+          if pending_event.nil?
+            raise InternalError,
+                  "Resumable upload internal error: recipe :#{recipe} " \
+                  "produced no continuation event and did not terminate"
+          end
+
+          [pending_event, nil]
+        end
 
         ##
         # @private
