@@ -52,10 +52,9 @@ module Gapic
       #    instructions.
       #
       # A recipe returning zero event-producing instructions without terminating stalls the loop, and a recipe
-      # returning multiple event-producing instructions discards continuation events. Note that
-      # {Instruction::RealignBuffer} (emitted by `:ack_chunk` and `:realign_from_recovery`) returns an `Integer`
-      # stream offset from `execute_realign_buffer` rather than an event object; changing that return value to an
-      # event-shaped object would violate the single-continuation-event invariant.
+      # returning multiple event-producing instructions discards continuation events. Side-effect instructions
+      # ({Instruction::NotifyProgress}, {Instruction::RealignBuffer}) explicitly return `nil` in the Driver by
+      # construction, so only {Instruction::FillBuffer} and `Send*` instructions produce continuation events.
       #
       # ### State transition graph
       #

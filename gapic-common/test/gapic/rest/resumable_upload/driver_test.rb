@@ -297,6 +297,22 @@ class DriverTest < Minitest::Test
                  err.message
   end
 
+  def test_on_progress_return_value_does_not_leak_into_trampoline_invariant
+    stub = FakeClientStub.new build_scripted_responses
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("0123456789"),
+      upload_size: 10,
+      chunk_size:  4,
+      on_progress: ->(_p) { Event::HttpResponse.new status: 200, headers: {} }
+    )
+
+    driver = Driver.new client_stub: stub, config: config
+    result = driver.run
+
+    assert_equal '{"done":true}', result
+  end
+
   private
 
   def build_scripted_responses

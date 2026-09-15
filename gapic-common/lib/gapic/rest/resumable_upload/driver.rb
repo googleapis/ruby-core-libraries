@@ -150,9 +150,10 @@ module Gapic
         # Assumes the trampoline loop invariant: each dispatched instruction batch
         # produces either a single continuation event or terminates the session
         # (via {Instruction::TerminateSuccess} or {Instruction::TerminateFailure}).
-        # Note that {Instruction::RealignBuffer} returns an `Integer` stream offset
-        # rejected by {#pending_event_type?}, keeping `:ack_chunk` and
-        # `:realign_from_recovery` single-event batches.
+        # Side-effect instructions ({Instruction::NotifyProgress},
+        # {Instruction::RealignBuffer}) explicitly return `nil` by construction,
+        # so only {Instruction::FillBuffer} and `Send*` instructions produce
+        # continuation events.
         #
         # @return [String, nil] Final response body
         def run
@@ -360,6 +361,7 @@ module Gapic
         #
         def execute_notify_progress instruction
           @config.on_progress&.call instruction.progress
+          nil
         end
 
         ##
@@ -400,6 +402,8 @@ module Gapic
           else
             realign_fast_forward_stream server_offset, buffer_end
           end
+
+          nil
         end
 
         ##
