@@ -147,7 +147,7 @@ module Gapic
         # Establishes a guaranteed monotonic deadline at the start of execution
         # so the upload cannot stall indefinitely.
         #
-        # @return [String, Object] Final response body
+        # @return [String, nil] Final response body
         def run
           @upload_log = UploadLog.new stub_logger, upload_id: LoggingConcerns.random_uuid4
           @deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + resolve_timeout
@@ -220,7 +220,7 @@ module Gapic
           when Instruction::SendQuery then execute_send_query instruction
           when Instruction::SendCancel then execute_send_cancel instruction
           when Instruction::TerminateSuccess
-            instruction.response.respond_to?(:body) ? instruction.response.body : instruction.response
+            instruction.response.body
           when Instruction::TerminateFailure then raise instruction.error
           end
         end

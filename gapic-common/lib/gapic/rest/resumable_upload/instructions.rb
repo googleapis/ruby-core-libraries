@@ -194,14 +194,14 @@ module Gapic
         # Upload finalized cleanly; return response.
         #
         # @!attribute [r] response
-        #   @return [Gapic::Rest::ResumableUpload::Event::HttpResponse, Object] Final response object
+        #   @return [Gapic::Rest::ResumableUpload::Event::HttpResponse] Final response object
         #
         TerminateSuccess = Data.define :response do
           ##
           # @private
           # Initializes a TerminateSuccess instruction.
           #
-          # @param response [Gapic::Rest::ResumableUpload::Event::HttpResponse, Object] Final response object
+          # @param response [Gapic::Rest::ResumableUpload::Event::HttpResponse] Final response object
           #
           def initialize response:
             super response: response

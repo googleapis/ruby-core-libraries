@@ -67,7 +67,7 @@ module Gapic
         # @!attribute [r] headers
         #   @return [Hash<String, String>] Response headers
         # @!attribute [r] body
-        #   @return [String, Object, nil] Response body
+        #   @return [String, nil] Response body
         # @!attribute [r] error
         #   @return [Gapic::Rest::Error, nil] Wrapped REST error if status >= 400
         #
@@ -78,7 +78,7 @@ module Gapic
           #
           # @param status [Integer] HTTP status code
           # @param headers [Hash<String, String>] Response headers
-          # @param body [String, Object, nil] Response body
+          # @param body [String, nil] Response body
           # @param error [Gapic::Rest::Error, nil] Wrapped REST error
           #
           def initialize status:, headers: {}, body: nil, error: nil

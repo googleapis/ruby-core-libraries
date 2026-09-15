@@ -196,6 +196,37 @@ class DriverTest < Minitest::Test
     ], progress_records
   end
 
+  def test_run_returns_nil_body_when_final_response_has_none
+    responses = [
+      FakeResponse.new(
+        status:  200,
+        headers: {
+          "X-Goog-Upload-URL"    => "https://example.com/session/1",
+          "X-Goog-Upload-Status" => "active"
+        },
+        body:    ""
+      ),
+      FakeResponse.new(
+        status:  200,
+        headers: { "X-Goog-Upload-Status" => "final" },
+        body:    nil
+      )
+    ]
+    stub = FakeClientStub.new responses
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("ab"),
+      upload_size: 2,
+      chunk_size:  4
+    )
+
+    driver = Driver.new client_stub: stub, config: config
+    result = driver.run
+
+    assert_nil result
+    assert_equal 2, stub.requests.size
+  end
+
   private
 
   def build_scripted_responses

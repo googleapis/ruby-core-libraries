@@ -253,7 +253,9 @@ module Gapic
         #   request. A {Gapic::Common::RetryPolicy} replaces the default policy outright; a Hash overrides only
         #   the settings it names and leaves the remaining defaults, including retry codes and predicates, in
         #   place.
-        # @return [String, Object] Final response body upon completion
+        # @return [String, nil] Raw, undecoded body of the finalizing HTTP response (or `nil` if the
+        #   response carried no body), typically the JSON resource the backend created that the caller
+        #   parses. A client stub carrying response-decoding middleware is outside the contract.
         # @raise [ArgumentError] If `initial_url` is missing or blank, if `initial_headers` sets a
         #   reserved `x-goog-upload-*` header, or if a retry policy argument is neither a
         #   {Gapic::Common::RetryPolicy}, a Hash, nor `nil`
@@ -330,7 +332,9 @@ module Gapic
         # @param upload_url [String, nil] Explicit upload URL
         # @param chunk_size [Integer, nil] Explicit chunk size
         # @param resume_handle [ResumeHandle, nil] Explicit resume handle
-        # @return [String, Object] Final response body upon completion
+        # @return [String, nil] Raw, undecoded body of the finalizing HTTP response (or `nil` if the
+        #   response carried no body), typically the JSON resource the backend created that the caller
+        #   parses. A client stub carrying response-decoding middleware is outside the contract.
         # @raise [ArgumentError] If argument shape is invalid, target upload is missing, or stream.pos != 0
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
         # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs
@@ -479,7 +483,7 @@ module Gapic
         # Executes the driver run and records the final upload URL and state.
         #
         # @param driver [Driver] Driver instance to run
-        # @return [String, Object] Final response body upon completion
+        # @return [String, nil] Final response body upon completion
         def execute_run driver
           @mutex.synchronize { @last_driver = driver }
           result = driver.run
