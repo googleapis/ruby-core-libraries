@@ -147,7 +147,8 @@ module Gapic
         # Establishes a guaranteed monotonic deadline at the start of execution
         # so the upload cannot stall indefinitely.
         #
-        # Assumes the trampoline loop invariant: each dispatched instruction batch
+        # Enforces the trampoline loop invariant: each dispatched instruction batch
+        # is validated by {#validate_batch} before any instruction executes, ensuring it
         # produces either a single continuation event or terminates the session
         # (via {Instruction::TerminateSuccess} or {Instruction::TerminateFailure}).
         # Side-effect instructions ({Instruction::NotifyProgress},

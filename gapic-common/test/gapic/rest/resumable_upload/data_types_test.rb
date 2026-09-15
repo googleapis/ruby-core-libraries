@@ -85,29 +85,14 @@ class DataTypesTest < Minitest::Test
   def test_start_upload_config_allows_caller_owned_initial_headers
     stream = StringIO.new "content"
     headers = {
-      "X-Goog-Test-Scenario"                    => "chunk_granularity",
+      "X-Goog-Test-Scenario"                     => "chunk_granularity",
       "X-Goog-Upload-Header-Content-Disposition" => 'attachment; filename="movie.mp4"',
-      "X-Custom"                                => "value"
+      "X-Custom"                                 => "value"
     }
 
-    config = StartUploadConfig.new(
-      initial_url:     "https://example.com",
-      stream:          stream,
-      initial_headers: headers,
-      content_type:    "video/mp4",
-      upload_size:     7
-    )
+    config = StartUploadConfig.new initial_url: "https://example.com", stream: stream, initial_headers: headers
 
     assert_equal headers, config.initial_headers
-
-    driver = Driver.new client_stub: Object.new, config: config
-    merged = driver.send :start_headers, Instruction::SendStart.new(url: "https://example.com", headers: headers)
-
-    assert_equal 'attachment; filename="movie.mp4"', merged["X-Goog-Upload-Header-Content-Disposition"]
-    assert_equal "resumable", merged["X-Goog-Upload-Protocol"]
-    assert_equal "start", merged["X-Goog-Upload-Command"]
-    assert_equal "video/mp4", merged["X-Goog-Upload-Header-Content-Type"]
-    assert_equal "7", merged["X-Goog-Upload-Header-Content-Length"]
   end
 
   def test_state_defaults_and_with

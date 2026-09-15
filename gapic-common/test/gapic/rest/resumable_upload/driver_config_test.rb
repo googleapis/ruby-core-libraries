@@ -241,6 +241,31 @@ class DriverConfigTest < Minitest::Test
     assert_equal({ "X-Goog-Upload-Protocol" => "resumable", "X-Goog-Upload-Command" => "start" }, headers)
   end
 
+  def test_start_headers_merges_caller_pass_through_upload_header
+    caller_headers = {
+      "X-Goog-Upload-Header-Content-Disposition" => 'attachment; filename="movie.mp4"',
+      "X-Custom"                                 => "value"
+    }
+    config = StartUploadConfig.new(
+      initial_url:     "https://example.com/upload",
+      stream:          StringIO.new("content"),
+      initial_headers: caller_headers,
+      content_type:    "video/mp4",
+      upload_size:     7
+    )
+    driver = Driver.new client_stub: FakeClientStub.new, config: config
+    instruction = Instruction::SendStart.new url: "https://example.com/upload", headers: caller_headers
+
+    headers = driver.send :start_headers, instruction
+
+    assert_equal 'attachment; filename="movie.mp4"', headers["X-Goog-Upload-Header-Content-Disposition"]
+    assert_equal "value", headers["X-Custom"]
+    assert_equal "resumable", headers["X-Goog-Upload-Protocol"]
+    assert_equal "start", headers["X-Goog-Upload-Command"]
+    assert_equal "video/mp4", headers["X-Goog-Upload-Header-Content-Type"]
+    assert_equal "7", headers["X-Goog-Upload-Header-Content-Length"]
+  end
+
   private
 
   def scripted_recovery_responses

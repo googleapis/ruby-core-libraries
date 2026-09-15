@@ -324,7 +324,7 @@ Full implementation: [reference-implementation.md#3-driver-class](reference-impl
 1.  **Logical Header Prefixing**: In the `start` request, logical headers describing the uploaded object must be prefixed with `X-Goog-Upload-Header-`. Specifically:
     *   `X-Goog-Upload-Header-Content-Type: config.content_type`
     *   `X-Goog-Upload-Header-Content-Length: config.upload_size` (if known upfront).
-    *   Callers cannot supply these or any other `x-goog-upload-*` header via `initial_headers` (doing so raises an `ArgumentError`).
+    *   Callers cannot supply either of these two headers via `initial_headers`; see the reserved-headers rule in Section 2 (doing so raises an `ArgumentError`). Other `X-Goog-Upload-Header-*` pass-through headers are permitted.
 2.  **Offset Extraction**: On `query` responses, the acknowledged byte count is extracted from `X-Goog-Upload-Size-Received` as an integer (`server_offset`).
 3.  **Request Modification on 4xx**: Retrying Category 2 errors requires querying the backend for `server_offset` first.
 4.  **Standard Retry Configuration & Distinct Policies**: The Driver manages distinct retry policy configurations for Category 1 transient errors:

@@ -100,9 +100,10 @@ module Gapic
       #
       # Arms are evaluated top to bottom, so their order encodes precedence and is load-bearing:
       #
-      # * The catch-all `[_, :global_deadline_exceeded]` and status-scoped `:user_cancel` arms sit above the rejected,
-      #   bad-response and request-error arms. Moving them below would let a late failure response win over an
-      #   expired deadline in precisely the states where the deadline matters.
+      # * `enter_recovery` and `fail_with_request_error` both match
+      #   `[:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,`
+      #   `:request_connection_failed | :request_timeout]`. Recovery wins purely because its arm precedes
+      #   `fail_with_request_error`.
       # * `[:starting, :response_cat2]` fails instead of recovering, unlike the same shape during transmission
       #   and finalizing. There is no upload to recover to until initiation yields an upload URL.
       # * `recovery` re-queries on `:response_cat2` with no attempt cap. Termination is guaranteed only by the
@@ -382,6 +383,9 @@ module Gapic
                      :send_finalize
                    in [:transmission_sending, :response_active]
                      :ack_chunk
+                   # Order matters: `enter_recovery` and `fail_with_request_error` below both match
+                   # `[:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
+                   # :request_connection_failed | :request_timeout]`. Recovery wins purely because this arm comes first.
                    in [:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
                        :response_cat2 | :request_connection_failed | :request_timeout]
                      :enter_recovery
@@ -396,9 +400,6 @@ module Gapic
                      :retry_recovery
                    in [:cancelling, :response_cancelled]
                      :complete_cancellation
-                   # Order matters from here down. The catch-all deadline arm and the status-scoped cancellation arm
-                   # must stay above the failure arms below, so that an expired deadline or a cancellation wins over a
-                   # late failure response arriving in the same states.
                    in [_, :global_deadline_exceeded]
                      :fail_with_deadline_exceeded
                    in [:transmission_reading | :transmission_sending | :finalizing_sending_upload |
