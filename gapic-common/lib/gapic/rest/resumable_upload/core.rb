@@ -27,7 +27,7 @@ module Gapic
       #
       # The middle tier of the three-tier design: `Driver` executes side effects, {Rules} decides transitions,
       # and Core holds the {State} between the two. See {Rules} for the protocol narrative and state graph, and
-      # `design/implementation-guide.md` section 1 for the tier boundaries.
+      # `design/resumable_upload/implementation-guide.md` section 1 for the tier boundaries.
       #
       class Core
         # @private

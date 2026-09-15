@@ -280,9 +280,9 @@ When `Core` resolves a recovery query or offset realignment, the Driver executes
 
 ---
 
-## 3. Component Architecture & Reference Implementation
+## 3. Component Architecture
 
-The complete reference implementation for `Rules`, `Core`, and `Driver` is located in [reference-implementation.md](reference-implementation.md).
+The authoritative implementation is the source itself, under `lib/gapic/rest/resumable_upload/`. This section describes the contract each component honours; the code is normative where the two disagree.
 
 ### 3.1 Rules Module (`Gapic::Rest::ResumableUpload::Rules`)
 The `Rules` module is a pure functional transition engine with zero state awareness and zero side effects. It provides two primary entry points:
@@ -290,7 +290,7 @@ The `Rules` module is a pure functional transition engine with zero state awaren
 *   `Rules.decide(state, event, config)`: Evaluates `case [state.status, shape]` pattern matching to select a transition recipe symbol, dispatches via `public_send(recipe, state, event, config)`, and returns a `Decision` snapshot (`from_status`, `shape`, `recipe`, `next_state`, `instructions`).
 *   `Rules.step(state, event, config)`: Convenience tuple wrapper around `Rules.decide` returning `[decision.next_state, decision.instructions]`.
 
-Full implementation: [reference-implementation.md#1-rules-module](reference-implementation.md#1-rules-module)
+Source: `lib/gapic/rest/resumable_upload/rules.rb`
 
 ### 3.2 Core Class (`Gapic::Rest::ResumableUpload::Core`)
 The `Core` class is the state container holding the immutable `State` snapshot. It exposes:
@@ -298,7 +298,7 @@ The `Core` class is the state container holding the immutable `State` snapshot. 
 *   `#last_decision`: Reader for the `Decision` recorded during the most recent `#dispatch` (or `nil`).
 *   `#dispatch(event)`: Invokes `Rules.decide(@state, event, @config)`, updates `@state = decision.next_state` and `@last_decision = decision`, and returns `decision.instructions` to the Driver.
 
-Full implementation: [reference-implementation.md#2-core-class](reference-implementation.md#2-core-class)
+Source: `lib/gapic/rest/resumable_upload/core.rb`
 
 ### 3.3 Driver Class (`Gapic::Rest::ResumableUpload::Driver`)
 The `Driver` is the synchronous execution engine for the pure protocol state machine. When `Core#dispatch(event)` is invoked, it returns an ordered list (`Array<Instruction>`) of commands that the Driver executes in sequence.
@@ -314,7 +314,7 @@ The Driver categorizes instructions into three execution types:
 3.  **Terminal Handlers** (`TerminateSuccess`, `TerminateFailure`):
     *   Break the event loop and return the final response body string (`response.body`) or raise the terminal exception.
 
-Full implementation: [reference-implementation.md#3-driver-class](reference-implementation.md#3-driver-class)
+Source: `lib/gapic/rest/resumable_upload/driver.rb`
 
 ---
 

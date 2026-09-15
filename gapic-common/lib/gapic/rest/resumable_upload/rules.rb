@@ -109,8 +109,8 @@ module Gapic
       # * `recovery` re-queries on `:response_cat2` with no attempt cap. Termination is guaranteed only by the
       #   global deadline the Driver enforces, not by anything in this module.
       #
-      # See `design/implementation-guide.md` section 4 for the transition specification and section 6.1 for the
-      # error category taxonomy this module implements.
+      # See `design/resumable_upload/implementation-guide.md` section 4 for the transition specification and
+      # section 6.1 for the error category taxonomy this module implements.
       #
       # rubocop:disable Metrics/ModuleLength
       module Rules
@@ -131,7 +131,7 @@ module Gapic
         # * **Category 3 (terminal)** - structurally invalid, unauthorized, rejected, or out of budget.
         #   Resolved by transitioning to `:error` or `:rejected` and emitting `Instruction::TerminateFailure`.
         #
-        # See `design/implementation-guide.md` section 6.1 for the full classification.
+        # See `design/resumable_upload/implementation-guide.md` section 6.1 for the full classification.
 
         ##
         # @private
