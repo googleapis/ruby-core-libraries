@@ -10,7 +10,7 @@ PATH
       googleapis-common-protos (~> 1.6)
       googleapis-common-protos-types (~> 1.15)
       googleauth (~> 1.12)
-      grpc (~> 1.66)
+      grpc (>= 1.83, < 2.a)
 
 GEM
   remote: https://rubygems.org/
