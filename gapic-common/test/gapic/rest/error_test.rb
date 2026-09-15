@@ -323,4 +323,17 @@ class RestErrorTest < Minitest::Test
 
     assert_nil gapic_err.details
   end
+
+  def test_rest_error_prefix_constant
+    assert_equal "An error has occurred when making a REST request", ::Gapic::Rest::Error::REST_ERROR_PREFIX
+
+    faraday_err = OpenStruct.new(
+      message:          "raw",
+      response_body:    JSON.dump({ "error" => { "message" => "Quota exceeded", "code" => 429 } }),
+      response_headers: {},
+      response_status:  429
+    )
+    gapic_err = ::Gapic::Rest::Error.wrap_faraday_error faraday_err
+    assert_equal "#{::Gapic::Rest::Error::REST_ERROR_PREFIX}: Quota exceeded", gapic_err.message
+  end
 end
