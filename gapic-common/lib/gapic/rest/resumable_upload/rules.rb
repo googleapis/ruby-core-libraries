@@ -52,7 +52,9 @@ module Gapic
       #    instructions.
       #
       # A recipe returning zero event-producing instructions without terminating stalls the loop, and a recipe
-      # returning multiple event-producing instructions discards continuation events. Side-effect instructions
+      # returning multiple event-producing instructions discards continuation events. The Driver validates each
+      # batch against {Instruction::CONTINUATION}, {Instruction::TERMINAL} and {Instruction::SIDE_EFFECT} before
+      # executing any instruction, rejecting malformed batches up front. Side-effect instructions
       # ({Instruction::NotifyProgress}, {Instruction::RealignBuffer}) explicitly return `nil` in the Driver by
       # construction, so only {Instruction::FillBuffer} and `Send*` instructions produce continuation events.
       #
@@ -87,14 +89,18 @@ module Gapic
       #     error --> [*]
       # ```
       #
-      # Two families of edge are omitted above to keep the graph readable: every non-terminal status moves to
-      # `cancelling` on `:user_cancel` and to `error` on `:global_deadline_exceeded`.
+      # The graph shows the protocol's intended path and its recoverable detours. Failure edges are largely omitted
+      # to keep it readable: every non-terminal status can also reach `error` (on `:global_deadline_exceeded`, on an
+      # unretriable request failure, on a fatally bad response, or on any unmatched event) and `rejected` (on
+      # `:response_rejected`), and every status listed in the `:user_cancel` arm can reach `cancelling`. `cancelling`
+      # in particular has only its success edge drawn; it fails like any other in-flight state. {Rules.decide} is the
+      # authoritative enumeration.
       #
       # ### Router ordering
       #
       # Arms are evaluated top to bottom, so their order encodes precedence and is load-bearing:
       #
-      # * The catch-all `[_, :global_deadline_exceeded]` and `[_, :user_cancel]` arms sit above the rejected,
+      # * The catch-all `[_, :global_deadline_exceeded]` and status-scoped `:user_cancel` arms sit above the rejected,
       #   bad-response and request-error arms. Moving them below would let a late failure response win over an
       #   expired deadline in precisely the states where the deadline matters.
       # * `[:starting, :response_cat2]` fails instead of recovering, unlike the same shape during transmission
@@ -170,8 +176,8 @@ module Gapic
 
         ##
         # @private
-        # Canonical list of protocol lifecycle statuses a {State} may hold. Derived from the keys of
-        # {STATE_DESCRIPTIONS} so the two cannot drift.
+        # Canonical list of protocol lifecycle statuses a {State} may hold. Guaranteed to match the keys of
+        # {STATE_DESCRIPTIONS} by the classification test suite.
         #
         # * `:initializing` - nothing dispatched yet; awaits `:start_upload` or `:resume_upload`.
         # * `:starting` - initiation request in flight; no upload URL yet.
@@ -191,7 +197,26 @@ module Gapic
         # run but may still be resumable from a fresh session; see {Rules.resume_handle_from}.
         #
         # @return [Array<Symbol>]
-        STATUSES = STATE_DESCRIPTIONS.keys.freeze
+        STATUSES = [
+          :initializing,
+          :starting,
+          :transmission_reading,
+          :transmission_sending,
+          :finalizing_sending_upload,
+          :finalizing_sending_finalize,
+          :recovery,
+          :cancelling,
+          :success,
+          :cancelled,
+          :rejected,
+          :error
+        ].freeze
+
+        ##
+        # @private
+        # Terminal protocol lifecycle statuses in {STATUSES}.
+        # @return [Array<Symbol>]
+        TERMINAL_STATUSES = [:success, :cancelled, :rejected, :error].freeze
 
         ##
         # @private
@@ -338,7 +363,9 @@ module Gapic
         # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
         def self.decide state, event, config
           shape = shape_of event
-          raise ArgumentError, "unknown shape: #{shape}" unless SHAPES.include? shape
+          unless SHAPES.include? shape
+            raise InternalError, "Resumable upload internal error: shape_of returned unknown shape #{shape.inspect}"
+          end
 
           recipe = case [state.status, shape]
                    in [:initializing, :start_upload]
@@ -369,12 +396,13 @@ module Gapic
                      :retry_recovery
                    in [:cancelling, :response_cancelled]
                      :complete_cancellation
-                   # Order matters from here down. These two catch-alls must stay above the failure arms below,
-                   # so that an expired deadline or a cancellation wins over a late failure response arriving
-                   # in the same states.
+                   # Order matters from here down. The catch-all deadline arm and the status-scoped cancellation arm
+                   # must stay above the failure arms below, so that an expired deadline or a cancellation wins over a
+                   # late failure response arriving in the same states.
                    in [_, :global_deadline_exceeded]
                      :fail_with_deadline_exceeded
-                   in [_, :user_cancel]
+                   in [:transmission_reading | :transmission_sending | :finalizing_sending_upload |
+                       :finalizing_sending_finalize | :recovery, :user_cancel]
                      :cancel_session
                    in [:starting | :transmission_sending | :finalizing_sending_upload |
                        :finalizing_sending_finalize | :recovery | :cancelling, :response_rejected]
@@ -395,7 +423,9 @@ module Gapic
                      :fail_with_unmatched_transition
                    end
 
-          raise ArgumentError, "unknown recipe: #{recipe}" unless RECIPES.include? recipe
+          unless RECIPES.include? recipe
+            raise InternalError, "Resumable upload internal error: decide selected unknown recipe #{recipe.inspect}"
+          end
 
           next_state, instructions = public_send recipe, state, event, config
           Decision.new(

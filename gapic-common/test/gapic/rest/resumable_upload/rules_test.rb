@@ -173,11 +173,10 @@ class RulesTest < Minitest::Test
     assert_equal Progress.new(phase: :cancelling, bytes_uploaded: 0, total_bytes: 1024), instructions[0].progress
     assert_instance_of Instruction::SendCancel, instructions[1]
 
-    # A duplicate cancel re-enters cancel_session through the wildcard arm and re-issues the command
-    dup_state, dup_instructions = Rules.step next_state, Event::Cancel.new, @config
-    assert_equal :cancelling, dup_state.status
-    assert_equal 2, dup_instructions.size
-    assert_instance_of Instruction::SendCancel, dup_instructions[1]
+    # A duplicate cancel in :cancelling raises InvalidTransitionError
+    assert_raises InvalidTransitionError do
+      Rules.step next_state, Event::Cancel.new, @config
+    end
 
     # Cancellation confirmed
     resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
@@ -244,19 +243,6 @@ class RulesTest < Minitest::Test
 
     assert_equal Rules::RECIPES.sort, fixtures.keys.sort
 
-    event_producing_types = [
-      Instruction::FillBuffer,
-      Instruction::SendStart,
-      Instruction::SendChunk,
-      Instruction::SendFinalize,
-      Instruction::SendQuery,
-      Instruction::SendCancel
-    ].freeze
-    terminal_types = [
-      Instruction::TerminateSuccess,
-      Instruction::TerminateFailure
-    ].freeze
-
     fixtures.each do |recipe, (state, event, cfg)|
       if recipe == :fail_with_unmatched_transition
         assert_raises InvalidTransitionError do
@@ -266,12 +252,28 @@ class RulesTest < Minitest::Test
       end
 
       _next_state, instructions = Rules.public_send recipe, state, event, cfg
-      event_producing_count = instructions.count { |inst| event_producing_types.include? inst.class }
-      terminal_count = instructions.count { |inst| terminal_types.include? inst.class }
+      event_producing_count = instructions.count { |inst| Instruction::CONTINUATION.include? inst.class }
+      terminal_count = instructions.count { |inst| Instruction::TERMINAL.include? inst.class }
 
       valid = (event_producing_count == 1 && terminal_count.zero?) ||
               (event_producing_count.zero? && terminal_count == 1)
       assert valid, "Recipe :#{recipe} produced #{event_producing_count} event-producing and #{terminal_count} terminal instructions"
     end
+  end
+
+  def test_instruction_constants_partition_all_instruction_classes
+    all_classes = Instruction.constants(false).map { |name| Instruction.const_get name }.grep(Class)
+    partition_union = Instruction::CONTINUATION + Instruction::TERMINAL + Instruction::SIDE_EFFECT
+
+    assert_empty all_classes - partition_union,
+                 "Instruction classes missing from CONTINUATION/TERMINAL/SIDE_EFFECT partition"
+    assert_empty partition_union - all_classes,
+                 "Partition contains classes that are not Instruction classes"
+    assert_empty Instruction::CONTINUATION & Instruction::TERMINAL
+    assert_empty Instruction::CONTINUATION & Instruction::SIDE_EFFECT
+    assert_empty Instruction::TERMINAL & Instruction::SIDE_EFFECT
+    assert_predicate Instruction::CONTINUATION, :frozen?
+    assert_predicate Instruction::TERMINAL, :frozen?
+    assert_predicate Instruction::SIDE_EFFECT, :frozen?
   end
 end

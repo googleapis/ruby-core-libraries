@@ -288,13 +288,66 @@ class DriverTest < Minitest::Test
       },
       body:    ""
     )
-    driver = Driver.new client_stub: FakeClientStub.new([resp, resp]), config: config, core: FakeCore.new(decision)
+    stub = FakeClientStub.new [resp, resp]
+    driver = Driver.new client_stub: stub, config: config, core: FakeCore.new(decision)
 
     err = assert_raises InternalError do
       driver.run
     end
     assert_equal "Resumable upload internal error: recipe :broken_multi produced multiple continuation events",
                  err.message
+    assert_empty stub.requests
+  end
+
+  def test_run_raises_internal_error_on_mixed_continuation_and_terminal
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("data"),
+      upload_size: 4
+    )
+    send_start = Instruction::SendStart.new url: "https://example.com/upload", headers: {}, body: ""
+    term_success = Instruction::TerminateSuccess.new response: Event::HttpResponse.new(status: 200, headers: {}, body: "")
+    decision = Decision.new(
+      from_status:  :initializing,
+      shape:        :start_upload,
+      recipe:       :broken_mixed,
+      next_state:   State.new(status: :starting),
+      instructions: [send_start, term_success]
+    )
+    stub = FakeClientStub.new []
+    driver = Driver.new client_stub: stub, config: config, core: FakeCore.new(decision)
+
+    err = assert_raises InternalError do
+      driver.run
+    end
+    assert_equal "Resumable upload internal error: recipe :broken_mixed " \
+                 "produced both a continuation event and a terminal instruction",
+                 err.message
+    assert_empty stub.requests
+  end
+
+  def test_run_raises_internal_error_on_unclassified_instruction
+    config = StartUploadConfig.new(
+      initial_url: "https://example.com/upload",
+      stream:      StringIO.new("data"),
+      upload_size: 4
+    )
+    decision = Decision.new(
+      from_status:  :initializing,
+      shape:        :start_upload,
+      recipe:       :broken_unclassified,
+      next_state:   State.new(status: :starting),
+      instructions: [Object.new]
+    )
+    stub = FakeClientStub.new []
+    driver = Driver.new client_stub: stub, config: config, core: FakeCore.new(decision)
+
+    err = assert_raises InternalError do
+      driver.run
+    end
+    assert_equal "Resumable upload internal error: recipe :broken_unclassified emitted unclassified instruction Object",
+                 err.message
+    assert_empty stub.requests
   end
 
   def test_on_progress_return_value_does_not_leak_into_trampoline_invariant

@@ -63,11 +63,11 @@ Configuration is split between transfer-wide options passed to `Session.new` (`C
 *   **Initiation (`Session#start`)**:
     `session.start(initial_url:, initial_body: nil, initial_headers: {}, chunk_size: nil, start_retry_policy: nil)`
     *   `initial_url` is required (`ArgumentError` if missing or blank).
-    *   `initial_headers` accepts caller-supplied HTTP headers for the initiation request, merged over the driver's headers. Any key with the `x-goog-upload-` prefix (in any casing) raises an `ArgumentError`; callers influence `X-Goog-Upload-Header-Content-Type` and `X-Goog-Upload-Header-Content-Length` through `content_type:` and `upload_size:` on the constructor.
+    *   `initial_headers` accepts caller-supplied HTTP headers for the initiation request, merged over the driver's headers. Any key in `RESERVED_INITIAL_HEADERS` (`X-Goog-Upload-Protocol`, `X-Goog-Upload-Command`, `X-Goog-Upload-Offset`, `X-Goog-Upload-Header-Content-Type`, `X-Goog-Upload-Header-Content-Length`, in any casing) raises an `ArgumentError`; callers influence `X-Goog-Upload-Header-Content-Type` and `X-Goog-Upload-Header-Content-Length` through `content_type:` and `upload_size:` on the constructor. Pass-through headers such as `X-Goog-Upload-Header-Content-Disposition` remain permitted.
 
 #### Resumability (`session.resumable?`)
 *   Reports whether a *new* session can resume the transfer (`!session.resume_handle.nil?`).
-*   Completed uploads are not resumable: once a transfer succeeds, `resume_handle` returns `nil` and `resumable?` returns `false`.
+*   Completed uploads are finalized: once a transfer succeeds, `resume_handle` returns `nil` and `resumable?` returns `false`, so there is no handle to resume from. Calling `#resume` on the session that completed the run raises `SessionStateError`. Resuming a *fresh* session against a finalized `upload_url` is undefined behavior: it queries the server and might return the response body or raise an error, depending on the server response.
 *   When a run fails with a recoverable error, `resume_handle` captures the upload parameters (`upload_url`, `chunk_size`) and `resumable?` returns `true`.
 
 #### Precondition on Stream Position for Resume
@@ -116,13 +116,19 @@ module Gapic
         :on_progress                       # [Proc, nil] Callback: ->(progress) with a Progress instance
       ].freeze
 
-      RESERVED_INITIAL_HEADER_PREFIX = "x-goog-upload-"
+      RESERVED_INITIAL_HEADERS = [
+        "x-goog-upload-protocol",
+        "x-goog-upload-command",
+        "x-goog-upload-offset",
+        "x-goog-upload-header-content-type",
+        "x-goog-upload-header-content-length"
+      ].freeze
 
       StartUploadConfig = Data.define(
         *COMMON_MEMBERS,
         :initial_url,                      # [String] Initial endpoint URI for session initiation
         :initial_body,                     # [String, nil] Request payload for session initiation
-        :initial_headers,                  # [Hash<String, String>] Additional headers for initiation (x-goog-upload-* rejected)
+        :initial_headers,                  # [Hash<String, String>] Additional headers for initiation (RESERVED_INITIAL_HEADERS rejected)
         :chunk_size,                       # [Integer, nil] Explicit chunk size in bytes
         :start_retry_policy                # [Gapic::Common::RetryPolicy, Hash, nil] Policy or hash override for start command
       )
@@ -140,9 +146,9 @@ module Gapic
 end
 ```
 
-**Reserved Header Prefix Rule (`RESERVED_INITIAL_HEADER_PREFIX`):**
-* Every header under the `"x-goog-upload-"` prefix is protocol machinery owned by the driver (`X-Goog-Upload-Protocol`, `X-Goog-Upload-Command`, `X-Goog-Upload-Offset`, `X-Goog-Upload-Header-Content-Type`, `X-Goog-Upload-Header-Content-Length`).
-* Any key in `initial_headers` beginning with `x-goog-upload-` (case-insensitively) is rejected at configuration construction with an `ArgumentError`. Callers shape media descriptors exclusively through `content_type` and `upload_size`.
+**Reserved Initial Headers Rule (`RESERVED_INITIAL_HEADERS`):**
+* The five headers in `RESERVED_INITIAL_HEADERS` (`X-Goog-Upload-Protocol`, `X-Goog-Upload-Command`, `X-Goog-Upload-Offset`, `X-Goog-Upload-Header-Content-Type`, `X-Goog-Upload-Header-Content-Length`) are protocol machinery owned by the driver.
+* Any key in `initial_headers` matching those five names (case-insensitively) is rejected at configuration construction with an `ArgumentError`. Callers shape media descriptors exclusively through `content_type` and `upload_size`. Pass-through headers under the prefix such as `X-Goog-Upload-Header-Content-Disposition` remain permitted.
 
 **Progress Notification Contract (`on_progress`):**
 * `on_progress` fires whenever upload status or server-confirmed byte offset changes. Sequential callbacks may report the same `bytes_uploaded`.
@@ -368,7 +374,7 @@ Full implementation: [reference-implementation.md#3-driver-class](reference-impl
 | **`Recovery`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind:, ...)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Recovery`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, body)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Recovery`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
-| **Any Non-Terminal** | `:user_cancel` | `Event::Cancel` | `status = :cancelling` | `Cancelling` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :cancelling, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendCancel.new(url: state.upload_url)` |
+| **`Transmission \| Reading from stream` / `Transmission \| Sending chunk` / `Finalizing \| Sending with upload` / `Finalizing \| Sending finalize` / `Recovery`** | `:user_cancel` | `Event::Cancel` | `status = :cancelling` | `Cancelling` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :cancelling, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendCancel.new(url: state.upload_url)` |
 | **`Cancelling`** | `:response_cancelled` | `Event::HttpResponse(200, headers, _)` with `Status: cancelled` | `status = :cancelled` | `Cancelled` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadCancelledError.from(event))` |
 | **`Cancelling`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, _)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Cancelling`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` / `:response_fatal_bad_response` | `Event::RequestFailed` or HTTP failure | `last_error = error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |

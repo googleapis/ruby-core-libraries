@@ -275,9 +275,12 @@ module Gapic
         # @param initial_url [String] Initial endpoint URI for session initiation
         # @param initial_body [String, nil] Request payload for session initiation
         # @param initial_headers [Hash<String, String>] Additional headers for the initiation request.
-        #   Keys beginning with `x-goog-upload-` are rejected with an `ArgumentError` in any casing —
+        #   The five reserved protocol headers (`X-Goog-Upload-Protocol`, `X-Goog-Upload-Command`,
+        #   `X-Goog-Upload-Offset`, `X-Goog-Upload-Header-Content-Type`,
+        #   `X-Goog-Upload-Header-Content-Length`) are rejected with an `ArgumentError` in any casing —
         #   they carry protocol mechanics the session owns. Use the constructor's `content_type` and
-        #   `upload_size` to shape the media descriptors.
+        #   `upload_size` to shape the media descriptors. Pass-through headers such as
+        #   `X-Goog-Upload-Header-Content-Disposition` are permitted.
         # @param chunk_size [Integer, nil] Requested chunk size in bytes, defaulting to 8 MB. The effective
         #   size is rounded down to a multiple of any chunk granularity the server requires, or raised to that
         #   granularity if it exceeds the requested size.
@@ -287,7 +290,7 @@ module Gapic
         #   response carried no body), typically the JSON resource the backend created that the caller
         #   parses. A client stub carrying response-decoding middleware is outside the contract.
         # @raise [ArgumentError] If `initial_url` is missing or blank, if `initial_headers` sets a
-        #   reserved `x-goog-upload-*` header, or if a retry policy argument is neither a
+        #   reserved protocol header, or if a retry policy argument is neither a
         #   {Gapic::Common::RetryPolicy}, a Hash, nor `nil`
         # @raise [SessionStateError] If already bound/executed or if a run is currently in progress
         # @raise [RequestFailedError] If a transport error, timeout, or retry exhaustion occurs
@@ -297,6 +300,8 @@ module Gapic
         # @raise [StreamMismatchError] If stream content or length does not match protocol expectations
         # @raise [InvalidTransitionError] If an unmatched event occurs for the current protocol state
         # @raise [UploadRejectedError] If the server explicitly rejects the upload session
+        # @raise [InternalError] If the library detects an internal invariant breach; this signals a bug
+        #   in this library rather than a caller or server error
         def start initial_url:,
                   initial_body: nil,
                   initial_headers: {},
@@ -345,7 +350,11 @@ module Gapic
         # streams or by reading and discarding on unseekable ones. An unseekable stream therefore has to be
         # freshly opened rather than rewound.
         #
-        # Completed uploads are not resumable; attempting to resume a completed session raises {SessionStateError}.
+        # A completed upload is finalized: {#resume_handle} returns `nil` and {#resumable?} returns
+        # `false`, so there is no handle to resume from. Calling `#resume` on the session that completed
+        # the run raises {SessionStateError}, as it would after any run. Resuming a *fresh* session
+        # against a finalized `upload_url` is undefined behavior: it queries the server and might return
+        # the response body or raise an error, depending on the server response.
         #
         # @example Resuming from a handle persisted by an earlier process
         #   handle = Gapic::Rest::ResumableUpload::ResumeHandle.new(
@@ -374,6 +383,8 @@ module Gapic
         # @raise [StreamMismatchError] If stream content or length does not match the resumed upload
         # @raise [InvalidTransitionError] If an unmatched event occurs for the current protocol state
         # @raise [UploadRejectedError] If the server explicitly rejects the upload session
+        # @raise [InternalError] If the library detects an internal invariant breach; this signals a bug
+        #   in this library rather than a caller or server error
         def resume upload_url: nil,
                    chunk_size: nil,
                    resume_handle: nil

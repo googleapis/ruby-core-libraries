@@ -20,6 +20,8 @@ module Gapic
       ##
       # @private
       # Instruction vocabulary emitted by Rules/Core to be executed by Driver.
+      # The vocabulary is partitioned three ways ({CONTINUATION}, {TERMINAL}, {SIDE_EFFECT}),
+      # and every instruction class must join exactly one list.
       #
       module Instruction
         ##
@@ -226,6 +228,37 @@ module Gapic
             super error: error
           end
         end
+
+        ##
+        # @private
+        # Instruction classes that produce a continuation event for the next step of the trampoline loop.
+        # @return [Array<Class>]
+        CONTINUATION = [
+          FillBuffer,
+          SendStart,
+          SendChunk,
+          SendFinalize,
+          SendQuery,
+          SendCancel
+        ].freeze
+
+        ##
+        # @private
+        # Instruction classes that terminate the upload run.
+        # @return [Array<Class>]
+        TERMINAL = [
+          TerminateSuccess,
+          TerminateFailure
+        ].freeze
+
+        ##
+        # @private
+        # Instruction classes that perform side effects without producing continuation events or terminating.
+        # @return [Array<Class>]
+        SIDE_EFFECT = [
+          NotifyProgress,
+          RealignBuffer
+        ].freeze
       end
     end
   end

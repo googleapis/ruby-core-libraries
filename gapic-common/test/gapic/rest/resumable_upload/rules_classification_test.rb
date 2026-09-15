@@ -242,9 +242,30 @@ class RulesClassificationTest < Minitest::Test
   end
 
   def test_statuses_tracks_state_descriptions
-    assert_equal Rules::STATE_DESCRIPTIONS.keys, Rules::STATUSES
+    assert_empty Rules::STATUSES - Rules::STATE_DESCRIPTIONS.keys,
+                 "status missing a description"
+    assert_empty Rules::STATE_DESCRIPTIONS.keys - Rules::STATUSES,
+                 "description for unknown status"
     assert_equal Rules::STATUSES.uniq, Rules::STATUSES
     assert_predicate Rules::STATUSES, :frozen?
+
+    assert_empty Rules::TERMINAL_STATUSES - Rules::STATUSES,
+                 "TERMINAL_STATUSES contains statuses outside STATUSES"
+    assert_predicate Rules::TERMINAL_STATUSES, :frozen?
+  end
+
+  def test_resume_handle_from_returns_nil_for_all_terminal_statuses_except_error
+    base_state = State.new upload_url: "https://example.com/session/123", chunk_size: 262_144
+
+    Rules::TERMINAL_STATUSES.each do |terminal_status|
+      state = base_state.with status: terminal_status
+      handle = Rules.resume_handle_from state
+      if terminal_status == :error
+        refute_nil handle, "Expected resume_handle_from to return a ResumeHandle for :error status"
+      else
+        assert_nil handle, "Expected resume_handle_from to return nil for terminal status #{terminal_status.inspect}"
+      end
+    end
   end
 
   def test_decide_rejects_a_shape_outside_the_vocabulary
@@ -252,12 +273,31 @@ class RulesClassificationTest < Minitest::Test
     config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("data")
 
     error = Rules.stub :shape_of, :not_a_real_shape do
-      assert_raises ArgumentError do
+      assert_raises InternalError do
         Rules.decide state, Event::StartUpload.new, config
       end
     end
 
-    assert_match(/unknown shape: not_a_real_shape/, error.message)
+    assert_match(/Resumable upload internal error: shape_of returned unknown shape :not_a_real_shape/, error.message)
+  end
+
+  def test_decide_rejects_a_recipe_outside_the_vocabulary
+    state = State.new
+    config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("data")
+    original_recipes = Rules::RECIPES
+
+    error = begin
+      Rules.send :remove_const, :RECIPES
+      Rules.const_set :RECIPES, [].freeze
+      assert_raises InternalError do
+        Rules.decide state, Event::StartUpload.new, config
+      end
+    ensure
+      Rules.send :remove_const, :RECIPES
+      Rules.const_set :RECIPES, original_recipes
+    end
+
+    assert_match(/Resumable upload internal error: decide selected unknown recipe :start_session/, error.message)
   end
 
   def test_resolve_chunk_size_with_nil_or_non_positive_granularity

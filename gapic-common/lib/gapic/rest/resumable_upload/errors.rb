@@ -554,9 +554,9 @@ module Gapic
 
       ##
       # @private
-      # Raised when an internal state machine or driver invariant is violated
-      # (e.g. a recipe batch producing zero continuation events without terminating,
-      # or producing multiple continuation events).
+      # Raised when an internal state machine or driver invariant is violated.
+      # Produced by {Rules} when an unlisted shape or recipe is encountered, and by
+      # {Driver} when a recipe emits a malformed instruction batch.
       #
       class InternalError < Gapic::Common::Error
       end

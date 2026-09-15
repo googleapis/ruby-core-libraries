@@ -231,14 +231,11 @@ class RulesDecideTest < Minitest::Test
     assert_instance_of Instruction::TerminateFailure, decision.instructions.first
   end
 
-  def test_row_cancelling_user_cancel_falls_through_to_wildcard
-    decision = Rules.decide State.new(status: :cancelling), Event::Cancel.new, @config
-    assert_equal :cancelling, decision.from_status
-    assert_equal :user_cancel, decision.shape
-    assert_equal :cancel_session, decision.recipe
-    assert_equal :cancelling, decision.next_state.status
-    assert_recipe_progress_notification decision
-    assert_instance_of Instruction::SendCancel, decision.instructions[1]
+  def test_row_cancelling_user_cancel_raises_invalid_transition
+    err = assert_raises InvalidTransitionError do
+      Rules.decide State.new(status: :cancelling), Event::Cancel.new, @config
+    end
+    assert_equal :cancelling, err.state
   end
 
   def test_row_global_deadline_exceeded
@@ -259,6 +256,30 @@ class RulesDecideTest < Minitest::Test
     assert_equal :cancelling, decision.next_state.status
     assert_recipe_progress_notification decision
     assert_instance_of Instruction::SendCancel, decision.instructions[1]
+  end
+
+  def test_user_cancel_across_all_statuses
+    cancellable = [
+      :transmission_reading,
+      :transmission_sending,
+      :finalizing_sending_upload,
+      :finalizing_sending_finalize,
+      :recovery
+    ]
+
+    Rules::STATUSES.each do |status|
+      state = State.new status: status, upload_url: "https://example.com/upload/session-1"
+      if cancellable.include? status
+        decision = Rules.decide state, Event::Cancel.new, @config
+        assert_equal :cancel_session, decision.recipe, "Expected :cancel_session for status #{status.inspect}"
+        assert_equal :cancelling, decision.next_state.status
+      else
+        err = assert_raises InvalidTransitionError, "Expected InvalidTransitionError for status #{status.inspect}" do
+          Rules.decide state, Event::Cancel.new, @config
+        end
+        assert_equal status, err.state
+      end
+    end
   end
 
   def test_row_response_rejected

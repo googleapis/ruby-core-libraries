@@ -183,28 +183,72 @@ module Gapic
         # @return [Array<Object, nil>] Tuple of [pending_event, terminal_result]
         #
         def execute_batch instructions
-          pending_event = nil
           recipe = @core.last_decision&.recipe
+          validate_batch instructions, recipe
 
+          pending_event = nil
           instructions.each do |instruction|
             result = dispatch_instruction instruction
             return [nil, result] if instruction.is_a? Instruction::TerminateSuccess
-            next unless pending_event_type? result
-
-            if pending_event
-              raise InternalError,
-                    "Resumable upload internal error: recipe :#{recipe} produced multiple continuation events"
-            end
-            pending_event = result
+            pending_event = result if Instruction::CONTINUATION.any? { |klass| instruction.is_a? klass }
           end
 
-          if pending_event.nil?
+          unless pending_event_type? pending_event
             raise InternalError,
-                  "Resumable upload internal error: recipe :#{recipe} " \
-                  "produced no continuation event and did not terminate"
+                  "Resumable upload internal error: recipe :#{recipe} continuation instruction " \
+                  "returned #{pending_event.class} instead of an event"
           end
-
           [pending_event, nil]
+        end
+
+        ##
+        # @private
+        # Validates that an instruction batch satisfies the trampoline invariant before execution.
+        #
+        # @param instructions [Array<Object>] Emitted instructions
+        # @param recipe [Symbol, nil] Recipe symbol from last decision
+        # @return [void]
+        # @raise [InternalError] If the batch is malformed or contains an unclassified instruction
+        #
+        def validate_batch instructions, recipe
+          continuation = 0
+          terminal = 0
+          instructions.each do |instruction|
+            case instruction
+            when *Instruction::CONTINUATION then continuation += 1
+            when *Instruction::TERMINAL     then terminal += 1
+            when *Instruction::SIDE_EFFECT  then nil
+            else
+              raise InternalError,
+                    "Resumable upload internal error: recipe :#{recipe} emitted " \
+                    "unclassified instruction #{instruction.class}"
+            end
+          end
+          return if continuation + terminal == 1
+
+          raise InternalError, batch_shape_message(recipe, continuation, terminal)
+        end
+
+        ##
+        # @private
+        # Formats diagnostic error message for a malformed instruction batch.
+        #
+        # @param recipe [Symbol, nil] Recipe symbol from last decision
+        # @param continuation [Integer] Number of continuation instructions
+        # @param terminal [Integer] Number of terminal instructions
+        # @return [String] Error message
+        #
+        def batch_shape_message recipe, continuation, terminal
+          reason = if continuation.zero? && terminal.zero?
+                     "produced no continuation event and did not terminate"
+                   elsif continuation > 1 && terminal.zero?
+                     "produced multiple continuation events"
+                   elsif continuation.zero? && terminal > 1
+                     "produced multiple terminal instructions"
+                   else
+                     "produced both a continuation event and a terminal instruction"
+                   end
+          "Resumable upload internal error: recipe :#{recipe} #{reason}"
         end
 
         ##
@@ -553,10 +597,9 @@ module Gapic
         # @private
         # Builds initiation HTTP headers from instruction and config.
         #
-        # Every header derived here carries the `x-goog-upload-` prefix, and caller headers bearing
-        # that prefix are rejected when the config is built (see {RESERVED_INITIAL_HEADER_PREFIX}).
-        # The two sets are disjoint, so a plain merge cannot drop a driver header or duplicate one
-        # under a different casing.
+        # Every header derived here is listed in {RESERVED_INITIAL_HEADERS}, and caller headers in
+        # that list are rejected when the config is built. The two sets are disjoint, so a plain merge
+        # cannot drop a driver header or duplicate one under a different casing.
         #
         # @param instruction [Instruction::SendStart] Start instruction
         # @return [Hash<String, String>] HTTP request headers

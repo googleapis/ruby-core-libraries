@@ -54,16 +54,24 @@ module Gapic
 
       ##
       # @private
-      # Header-name prefix a caller may not use in `initial_headers`, lowercased for comparison.
+      # Header names a caller may not use in `initial_headers`, lowercased for comparison.
       #
-      # Every header under this prefix is protocol machinery the driver owns: the command verb, the
-      # byte offset, and the content descriptors derived from `content_type` and `upload_size`. A
-      # caller-supplied value competes with the driver's own bookkeeping, and the resulting failure
-      # never names the cause. Callers shape these through `content_type` and `upload_size` instead.
+      # These five headers are protocol machinery the driver owns: the protocol identifier, the command
+      # verb, the byte offset, and the content descriptors derived from `content_type` and `upload_size`.
+      # `x-goog-upload-offset` is included for completeness even though initiation never sets an offset:
+      # supplying an offset at initiation is meaningless and indicates a confused caller. Pass-through
+      # headers such as `X-Goog-Upload-Header-Content-Disposition` remain permitted.
       #
-      # See `Driver#start_headers`, which builds the headers this prefix protects.
+      # See `Driver#start_headers`, which builds the initiation headers this list protects.
       #
-      RESERVED_INITIAL_HEADER_PREFIX = "x-goog-upload-"
+      # @return [Array<String>]
+      RESERVED_INITIAL_HEADERS = [
+        "x-goog-upload-protocol",
+        "x-goog-upload-command",
+        "x-goog-upload-offset",
+        "x-goog-upload-header-content-type",
+        "x-goog-upload-header-content-length"
+      ].freeze
 
       ##
       # @private
@@ -77,8 +85,8 @@ module Gapic
       #   @return [String, nil] Request payload for session initiation
       # @!attribute [r] initial_headers
       #   @return [Hash<String, String>] Additional headers for initiation, merged over the driver's
-      #     own headers. Keys beginning with {RESERVED_INITIAL_HEADER_PREFIX} are rejected in any
-      #     casing; use `content_type` and `upload_size` to shape those.
+      #     own headers. Keys in {RESERVED_INITIAL_HEADERS} are rejected in any casing; use
+      #     `content_type` and `upload_size` to shape those.
       # @!attribute [r] chunk_size
       #   @return [Integer, nil] Requested chunk size in bytes, aligned to the granularity the server
       #     reports during initiation. A resumed run takes its chunk size from {ResumeUploadConfig}.
@@ -100,9 +108,9 @@ module Gapic
         # @param initial_url [String] Initial endpoint URI for session initiation
         # @param stream [IO] Binary input stream to upload
         # @param initial_body [String, nil] Request payload for session initiation
-        # @param initial_headers [Hash<String, String>] Additional headers for initiation. Keys beginning
-        #   with {RESERVED_INITIAL_HEADER_PREFIX} are rejected in any casing; use `content_type` and
-        #   `upload_size` to shape those.
+        # @param initial_headers [Hash<String, String>] Additional headers for initiation. Keys in
+        #   {RESERVED_INITIAL_HEADERS} are rejected in any casing; use `content_type` and `upload_size`
+        #   to shape those.
         # @param upload_size [Integer, nil] Total upload bytes if known upfront
         # @param chunk_size [Integer, nil] Requested chunk size in bytes
         # @param content_type [String, nil] MIME type of uploaded media
@@ -128,7 +136,7 @@ module Gapic
           raise ArgumentError, "initial_url is required" if initial_url.nil? || initial_url.to_s.strip.empty?
           raise ArgumentError, "stream is required" if stream.nil?
           reserved = (initial_headers || {}).keys.find do |key|
-            key.to_s.downcase.start_with? RESERVED_INITIAL_HEADER_PREFIX
+            RESERVED_INITIAL_HEADERS.include? key.to_s.downcase
           end
           if reserved
             raise ArgumentError,

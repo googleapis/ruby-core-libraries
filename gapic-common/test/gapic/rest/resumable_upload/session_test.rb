@@ -335,6 +335,9 @@ class SessionTest < Minitest::Test
     )
     start_session session
 
+    assert_nil session.resume_handle
+    refute session.resumable?
+
     handle = ResumeHandle.new upload_url: "https://upload.example.com/session_1", chunk_size: 4
     err = assert_raises SessionStateError do
       session.resume resume_handle: handle

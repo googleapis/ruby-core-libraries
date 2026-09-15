@@ -122,7 +122,7 @@ flowchart TD
 * **Transmission start**: `:starting` on `:response_active` resolves chunk size and granularity, transitions to `:transmission_reading`, and emits `Instruction::FillBuffer`.
 * **Chunk transmission & finalization**: `:transmission_reading` dispatches `SendChunk` (with or without `finalize: true`) or standalone `SendFinalize` depending on stream EOF and buffered bytes.
 * **Chunk acknowledgment**: `:transmission_sending` on `:response_active` advances offset, emits `NotifyProgress`, `RealignBuffer`, and `FillBuffer`.
-* **Cancellation flow**: `:user_cancel` transitions to `:cancelling` and emits `SendCancel`; `:response_cancelled` transitions to `:cancelled`.
+* **Cancellation flow**: `:user_cancel` transitions to `:cancelling` and emits `SendCancel` in the five statuses with an established upload URL (`:transmission_reading`, `:transmission_sending`, `:finalizing_sending_upload`, `:finalizing_sending_finalize`, `:recovery`), and raises `InvalidTransitionError` in `:cancelling`, `:initializing`, `:starting`, and terminal statuses; `:response_cancelled` transitions to `:cancelled`.
 
 #### B. Protocol Recovery Transitions (`rules_recovery_test.rb`)
 * **Entering recovery**: `:transmission_sending` (on `:response_cat2`, `:request_connection_failed`, `:request_timeout`) and `:finalizing_sending_upload` (on `:request_timeout`) transition to `:recovery` and emit `Instruction::SendQuery`.
