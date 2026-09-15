@@ -43,5 +43,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency "google-cloud-env", "~> 2.2"
   spec.add_dependency "google-logging-utils", "~> 0.1"
   spec.add_dependency "google-protobuf", "~> 4.26"
-  spec.add_dependency "grpc", "~> 1.66"
+  spec.add_dependency "grpc", ">= 1.83", "< 2.a"
 end
