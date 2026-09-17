@@ -67,7 +67,12 @@ jobs:
       with:
         node-version: "24.x"
     - name: Install tools
-      run: "gem install --no-document toys && npm install linkinator"
+      # Pinned to the 0.22.x series deliberately: toys 0.23.0 broke the `build`
+      # tool ("Could not find a gemspec") and 0.24.0 additionally removed the
+      # `alias_tool` directive, so 0.22.0 is the last fully working release.
+      # Must be "~> 0.22.0" (>= 0.22.0, < 0.23.0) and not "~> 0.22", which
+      # would still admit 0.23 and 0.24.
+      run: "gem install --no-document toys -v '~> 0.22.0' && npm install linkinator"
     - name: Test ${{ matrix.task }}
       env:
         GITHUB_EVENT_NAME: ${{ github.event_name }}
