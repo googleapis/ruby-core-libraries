@@ -47,7 +47,9 @@ flowchart TD
 * **`ShowcaseIntegrationTest`**: Base class providing helper methods for test configuration:
   * `showcase_client_stub`: Instantiates a real `Gapic::Rest::ClientStub` targeting `SHOWCASE_ENDPOINT` with `raise_faraday_errors: false` and an attached `DEBUG` logger.
   * `build_config(scenario: nil, scenario_config: {}, **overrides)`: Creates a `StartUploadConfig` targeting `/resumable/upload/v1beta1/files:upload`. When `scenario` is provided, injects `X-Goog-Test-Scenario` and `X-Goog-Test-Scenario-Config` (with a generated `client_uuid` merged with `scenario_config`) into `initial_headers` (these test headers are unaffected by `RESERVED_INITIAL_HEADERS` since they are not in the five reserved protocol headers). Configures fast retry policies (`FAST_RETRY = { initial_delay: 0.01, max_delay: 0.05, multiplier: 1, timeout: 2 }`), a default 10-second session timeout, a default payload of `786_432` bytes (`3 * 262_144`), default chunk size of `262_144` bytes, and an `on_progress` callback appending each `Progress` struct to `@progress_records`.
-  * `build_session(scenario: nil, scenario_config: {}, **overrides)` & `start_session(session, **overrides)`: Partitions overrides using `START_ONLY_KEYS` (`[:initial_url, :initial_body, :initial_headers, :chunk_size, :start_retry_policy]`). `build_session` instantiates a `Gapic::Rest::ResumableUpload::Session` with the common members (`client_stub`, `stream`, `upload_size`, `content_type`, `timeout`, `control_plane_retry_policy`, `data_plane_retry_policy`, `on_progress`, `logger`) and stores initiation arguments in `@start_args`, while `start_session` invokes `session.start(**@start_args, **overrides)`.
+  * `build_upload(scenario: nil, scenario_config: {}, initial_headers: {}, **overrides)`: Instantiates a `::Gapic::ResumableUpload` whose `client_stub_proc` returns a Showcase client stub and whose `initial_request_proc` returns `[UPLOAD_PATH, nil]`. Injects the same scenario headers as `build_config`, sets all three retry policies to `FAST_RETRY`, and passes `response_type: nil` so runs return the raw response body for the tests to parse.
+  * `start_args(**overrides)` & `resume_args(**overrides)`: Default per-run arguments — a `786_432`-byte payload and its `upload_size`, a 10-second `upload_timeout`, and an `on_progress` callback appending each `Progress` struct to `@progress_records`. `start_args` adds the `262_144`-byte `chunk_size`, which a resumed run takes from its `ResumeHandle` instead.
+  * `resume_handle_for(upload_url, chunk_size: DEFAULT_CHUNK_SIZE)`: Builds a `ResumeHandle` for an upload created out-of-band by `raw_start`.
   * `phases` & `offsets`: Convenience accessors returning `@progress_records.map(&:phase)` and `@progress_records.map(&:bytes_uploaded)`.
   * `payload(size)`: Generates deterministic binary strings of arbitrary byte length for stream uploads.
   * `UnseekableStream`: Stream wrapper around `StringIO` that exposes `#read` and `#pos` while omitting `#seek` (`respond_to?(:seek)` is `false`).
@@ -256,10 +258,10 @@ Tests non-fatal transient retries, missing status headers, retry exhaustion, fat
 
 ### 2.5 Resumption Suite (`integration/resumable_upload/resume_test.rb`)
 
-Tests `Gapic::Rest::ResumableUpload::Session` resumption capabilities against Showcase.
+Tests `Gapic::ResumableUpload` resumption capabilities against Showcase.
 
 #### Case 1. Resume in-progress upload on seekable stream (`test_resume_in_progress_upload`)
-* Uploads chunk 1 via `raw_upload`, then resumes with a fresh session and full stream.
+* Uploads chunk 1 via `raw_upload`, then resumes a fresh upload handle with an explicit `resume_handle:` and the full stream.
 * Asserts `phases == [:initiating, :uploading, :uploading, :uploading, :finalizing, :completed]` and offsets align correctly.
 
 #### Case 2. Resume already finalized upload (`test_resume_finalized_upload`)
@@ -279,8 +281,8 @@ Tests `Gapic::Rest::ResumableUpload::Session` resumption capabilities against Sh
 * **Case 5b (`test_resume_wrong_stream_seekable_size_guard`)**: Seekable `StringIO` with `server_offset > stream.size` (and `upload_size: nil`) raises `StreamMismatchError` via stream size guard.
 
 #### Case 6. Golden user-style resume (`test_golden_user_style_resume_seekable`, `test_golden_user_style_resume_unseekable`)
-* User raises exception in `on_progress` carrying `session.resume_handle` on first upload ack.
-* Fresh session resumes via `resume_handle: handle` and completes the transfer. Tested on both seekable streams and fresh unseekable streams starting at byte 0.
+* User raises exception in `on_progress` carrying `upload.resume_handle` on first upload ack.
+* The same handle object then resumes — bare for the seekable case, with an explicit `resume_handle:` for the unseekable one — and completes the transfer. The unseekable variant uses a fresh stream starting at byte 0.
 
-#### Case 7. Lifecycle and contract violations (`test_lifecycle_violations`)
-* Verifies second `start` and `resume` on bound session raise `SessionStateError`, and bare `resume` raises `ArgumentError`.
+#### Case 7. Lifecycle of a reused handle (`test_lifecycle_of_a_reused_handle`)
+* Verifies a completed run leaves `resumable?` and `running?` false, a bare `resume` afterwards raises `ArgumentError`, a second `start` on the same handle is legal and initiates an unrelated upload, and a bare `resume` on a handle that has never run raises `ArgumentError`.

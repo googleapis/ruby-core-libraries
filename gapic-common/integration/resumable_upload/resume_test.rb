@@ -19,7 +19,7 @@ require "json"
 require "stringio"
 
 ##
-# Suite D: Integration tests for Resumable Upload Session resumption against Showcase.
+# Suite D: Integration tests for resumption against Showcase, driven through ::Gapic::ResumableUpload.
 #
 class ResumeTest < ShowcaseIntegrationTest
   ##
@@ -40,8 +40,8 @@ class ResumeTest < ShowcaseIntegrationTest
     chunk1 = payload(DEFAULT_PAYLOAD_SIZE).byteslice 0, DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: chunk1, finalize: false
 
-    session = build_session
-    result = session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    upload = build_upload
+    result = upload.resume(**resume_args(resume_handle: resume_handle_for(upload_url)))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -54,8 +54,10 @@ class ResumeTest < ShowcaseIntegrationTest
     upload_url = raw_start upload_size: DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: payload(DEFAULT_CHUNK_SIZE), finalize: true
 
-    session = build_session stream: StringIO.new(payload(DEFAULT_CHUNK_SIZE)), upload_size: DEFAULT_CHUNK_SIZE
-    result = session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    upload = build_upload
+    result = upload.resume(**resume_args(stream:        StringIO.new(payload(DEFAULT_CHUNK_SIZE)),
+                                         upload_size:   DEFAULT_CHUNK_SIZE,
+                                         resume_handle: resume_handle_for(upload_url)))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_CHUNK_SIZE, parsed["size"]
@@ -72,8 +74,8 @@ class ResumeTest < ShowcaseIntegrationTest
     chunk1 = payload(DEFAULT_PAYLOAD_SIZE).byteslice 0, DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: chunk1, finalize: false
 
-    session = build_session
-    result = session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    upload = build_upload
+    result = upload.resume(**resume_args(resume_handle: resume_handle_for(upload_url)))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -91,8 +93,8 @@ class ResumeTest < ShowcaseIntegrationTest
     chunk1 = payload(DEFAULT_PAYLOAD_SIZE).byteslice 0, DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: chunk1, finalize: false
 
-    session = build_session
-    result = session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    upload = build_upload
+    result = upload.resume(**resume_args(resume_handle: resume_handle_for(upload_url)))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -107,9 +109,9 @@ class ResumeTest < ShowcaseIntegrationTest
     chunk1 = payload(DEFAULT_PAYLOAD_SIZE).byteslice 0, DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: chunk1, finalize: false
 
-    stream = UnseekableStream.new payload(DEFAULT_PAYLOAD_SIZE)
-    session = build_session stream: stream
-    result = session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    upload = build_upload
+    result = upload.resume(**resume_args(stream:        UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE)),
+                                         resume_handle: resume_handle_for(upload_url)))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -122,11 +124,12 @@ class ResumeTest < ShowcaseIntegrationTest
     upload_url = raw_start upload_size: DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: payload(DEFAULT_CHUNK_SIZE), finalize: false
 
-    stream = UnseekableStream.new payload(100)
-    session = build_session stream: stream, upload_size: nil
+    upload = build_upload
 
     assert_raises Gapic::Rest::ResumableUpload::StreamMismatchError do
-      session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+      upload.resume(**resume_args(stream:        UnseekableStream.new(payload(100)),
+                                  upload_size:   nil,
+                                  resume_handle: resume_handle_for(upload_url)))
     end
     refute_includes phases, :finalizing
   end
@@ -136,94 +139,93 @@ class ResumeTest < ShowcaseIntegrationTest
     upload_url = raw_start upload_size: DEFAULT_CHUNK_SIZE
     raw_upload upload_url: upload_url, offset: 0, bytes: payload(DEFAULT_CHUNK_SIZE), finalize: false
 
-    stream = StringIO.new payload(100)
-    session = build_session stream: stream, upload_size: nil
+    upload = build_upload
 
     assert_raises Gapic::Rest::ResumableUpload::StreamMismatchError do
-      session.resume upload_url: upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+      upload.resume(**resume_args(stream:        StringIO.new(payload(100)),
+                                  upload_size:   nil,
+                                  resume_handle: resume_handle_for(upload_url)))
     end
     refute_includes phases, :finalizing
   end
 
-  # D6a. Golden user-style resume on a seekable stream after user abort in on_progress.
+  # D6a. Golden user-style resume on a seekable stream after user abort in on_progress, reusing the handle
+  # and its retained resume handle rather than passing one back in.
   def test_golden_user_style_resume_seekable
     stream = StringIO.new payload(DEFAULT_PAYLOAD_SIZE)
-    session1 = nil
+    upload = nil
     on_progress = lambda do |progress|
       if progress.phase == :uploading && progress.bytes_uploaded == DEFAULT_CHUNK_SIZE
-        raise UserPauseError.new("user paused", session1.resume_handle)
+        raise UserPauseError.new("user paused", upload.resume_handle)
       end
     end
 
-    session1 = build_session stream: stream, on_progress: on_progress
+    upload = build_upload
     err = assert_raises UserPauseError do
-      start_session session1
+      upload.start(**start_args(stream: stream, on_progress: on_progress))
     end
 
-    assert session1.bound?
-    assert session1.resumable?
-    handle = err.resume_handle
-    refute_nil handle
+    assert upload.resumable?
+    refute_nil err.resume_handle
+    assert_equal err.resume_handle, upload.resume_handle
 
     stream.rewind
-    session2 = build_session stream: stream
-    result = session2.resume resume_handle: handle
+    result = upload.resume(**resume_args(stream: stream))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
-    assert session2.bound?
-    refute session2.resumable?
+    refute upload.resumable?
   end
 
-  # D6b. Golden user-style resume with a fresh unseekable stream starting at byte 0.
+  # D6b. Golden user-style resume with a fresh unseekable stream starting at byte 0, resuming from the
+  # handle the error carried.
   def test_golden_user_style_resume_unseekable
-    session1 = nil
+    upload = nil
     on_progress = lambda do |progress|
       if progress.phase == :uploading && progress.bytes_uploaded == DEFAULT_CHUNK_SIZE
-        raise UserPauseError.new("user paused", session1.resume_handle)
+        raise UserPauseError.new("user paused", upload.resume_handle)
       end
     end
 
-    session1 = build_session stream: UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE)), on_progress: on_progress
+    upload = build_upload
     err = assert_raises UserPauseError do
-      start_session session1
+      upload.start(**start_args(stream:      UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE)),
+                                on_progress: on_progress))
     end
 
-    assert session1.bound?
-    assert session1.resumable?
+    assert upload.resumable?
     handle = err.resume_handle
     refute_nil handle
 
-    session2 = build_session stream: UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE))
-    result = session2.resume resume_handle: handle
+    result = upload.resume(**resume_args(stream:        UnseekableStream.new(payload(DEFAULT_PAYLOAD_SIZE)),
+                                         resume_handle: handle))
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
-    assert session2.bound?
-    refute session2.resumable?
+    refute upload.resumable?
   end
 
-  # D7. Lifecycle and contract violations on session runs.
-  def test_lifecycle_violations
-    session = build_session stream: StringIO.new(payload(100)), upload_size: 100
-    start_session session
+  # D7. Lifecycle of a reusable handle: a finished run leaves nothing to resume, but the handle itself
+  # stays usable.
+  def test_lifecycle_of_a_reused_handle
+    upload = build_upload
+    upload.start(**start_args(stream: StringIO.new(payload(100)), upload_size: 100))
 
-    assert session.bound?
+    refute upload.resumable?
+    refute upload.running?
 
-    # Second start on executed session raises SessionStateError
-    assert_raises Gapic::Rest::ResumableUpload::SessionStateError do
-      start_session session
-    end
-
-    # Resume on already bound/executed session raises SessionStateError
-    assert_raises Gapic::Rest::ResumableUpload::SessionStateError do
-      session.resume upload_url: "https://example.com/test", chunk_size: DEFAULT_CHUNK_SIZE
-    end
-
-    # Resume without parameters on fresh session raises ArgumentError
-    fresh_session = build_session
+    # A bare resume after a completed run has no handle to work from.
     assert_raises ArgumentError do
-      fresh_session.resume
+      upload.resume(**resume_args(stream: StringIO.new(payload(100)), upload_size: 100))
+    end
+
+    # Starting again is legal, and initiates a second, unrelated upload.
+    result = upload.start(**start_args(stream: StringIO.new(payload(100)), upload_size: 100))
+    assert_equal 100, JSON.parse(result)["size"]
+
+    # A bare resume on a handle that has never run has nothing to work from either.
+    assert_raises ArgumentError do
+      build_upload.resume(**resume_args)
     end
   end
 end

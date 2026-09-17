@@ -59,7 +59,7 @@ module Gapic
         ##
         # @private
         # Default options for start command retry policy.
-        # Keep in sync with the "Retry Policies" section of Session's class doc.
+        # Keep in sync with the "Retry Policies" section of the Gapic::ResumableUpload class doc.
         # @return [Hash]
         START_DEFAULTS = {
           retry_codes:     ["UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED", "INTERNAL"].freeze,
@@ -72,7 +72,7 @@ module Gapic
         ##
         # @private
         # Default options for query and cancel commands retry policy.
-        # Keep in sync with the "Retry Policies" section of Session's class doc.
+        # Keep in sync with the "Retry Policies" section of the Gapic::ResumableUpload class doc.
         # @return [Hash]
         CONTROL_PLANE_DEFAULTS = {
           retry_codes:   ["UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED", "INTERNAL"].freeze,
@@ -84,7 +84,7 @@ module Gapic
         ##
         # @private
         # Default options for upload and finalize commands retry policy.
-        # Keep in sync with the "Retry Policies" section of Session's class doc.
+        # Keep in sync with the "Retry Policies" section of the Gapic::ResumableUpload class doc.
         # @return [Hash]
         DATA_PLANE_DEFAULTS = {
           retry_codes:     ["UNAVAILABLE", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED", "INTERNAL"].freeze,

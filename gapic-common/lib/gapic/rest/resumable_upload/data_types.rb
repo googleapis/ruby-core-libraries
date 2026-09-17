@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# rubocop:disable Metrics/ModuleLength
+
 module Gapic
   module Rest
-    # rubocop:disable Metrics/ModuleLength
     module ResumableUpload
       ##
       # @private
@@ -75,7 +76,8 @@ module Gapic
 
       ##
       # @private
-      # Immutable configuration for a run that initiates a new upload session, i.e. {Session#start}.
+      # Immutable configuration for a run that initiates a new upload session, i.e.
+      # {Gapic::ResumableUpload#start}.
       #
       # Carries {COMMON_MEMBERS} plus the members only an initiating run uses.
       #
@@ -163,7 +165,8 @@ module Gapic
 
       ##
       # @private
-      # Immutable configuration for a run that resumes an existing upload session, i.e. {Session#resume}.
+      # Immutable configuration for a run that resumes an existing upload session, i.e.
+      # {Gapic::ResumableUpload#resume}.
       #
       # Carries {COMMON_MEMBERS} plus the upload URL and chunk size the earlier run established. There is
       # no `start_retry_policy` here: a resumed run issues no initiation request, so the member would
@@ -230,7 +233,7 @@ module Gapic
       #
       # The `on_progress` callback runs synchronously on the same thread as the upload protocol
       # and must not block. Any exception raised inside the callback aborts the upload session
-      # and propagates out of {Session#start} or {Session#resume}.
+      # and propagates out of {Gapic::ResumableUpload#start} or {Gapic::ResumableUpload#resume}.
       #
       # @!attribute [r] phase
       #   @return [Symbol] Current upload phase, one of {Progress::PHASES}
@@ -274,8 +277,8 @@ module Gapic
       # Allowed lifecycle phases for an upload session.
       #
       # A callback observes `:initiating`, `:uploading`, `:recovering`, `:finalizing` and `:completed`.
-      # `:cancelling` is reserved: cancellation is not exposed on {Session}, so no phase with that value is
-      # currently emitted.
+      # `:cancelling` is reserved: cancellation is not exposed on {Gapic::ResumableUpload}, so no phase
+      # with that value is currently emitted.
       #
       # @return [Array<Symbol>]
       Progress::PHASES = [:initiating, :uploading, :recovering, :finalizing, :cancelling, :completed].freeze
@@ -410,6 +413,7 @@ module Gapic
         end
       end
     end
-    # rubocop:enable Metrics/ModuleLength
   end
 end
+
+# rubocop:enable Metrics/ModuleLength

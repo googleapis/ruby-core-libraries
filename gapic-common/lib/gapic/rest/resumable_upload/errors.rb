@@ -546,8 +546,8 @@ module Gapic
       end
 
       ##
-      # Raised when an operation violates the Session lifecycle rules
-      # (e.g. calling a `start` method more than once).
+      # Raised when an operation violates the upload session lifecycle rules, e.g. starting a second run
+      # on a coordinator while one is still in flight.
       #
       class SessionStateError < Gapic::Common::Error
       end

@@ -92,6 +92,34 @@ class DriverLoggingTest < Minitest::Test
     assert_includes ["complete_upload_with_data", "complete_upload_finalized"], info_recipes.last
   end
 
+  def test_method_name_prefixes_per_request_log_names
+    responses = [
+      FakeResponse.new(
+        200,
+        {
+          "X-Goog-Upload-Status" => "active",
+          "X-Goog-Upload-URL"    => "https://storage.googleapis.com/session?id=123"
+        },
+        ""
+      ),
+      FakeResponse.new(200, { "X-Goog-Upload-Status" => "final" }, "done")
+    ]
+
+    stub = FakeStub.new responses
+    config = StartUploadConfig.new(
+      initial_url: "https://storage.googleapis.com/upload",
+      stream:      StringIO.new("hello world"),
+      upload_size: 11,
+      chunk_size:  256
+    )
+
+    driver = Driver.new client_stub: stub, config: config, logger: RecordingLogger.new,
+                        method_name: "create_media_upload"
+    driver.run
+
+    assert_equal ["create_media_upload.start", "create_media_upload.upload"], stub.method_names
+  end
+
   def test_multi_chunk_upload_logs_lifecycle_entries
     recording = RecordingLogger.new
     run_two_chunk_upload_with_secret recording
