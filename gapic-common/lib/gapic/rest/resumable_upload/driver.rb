@@ -89,12 +89,16 @@ module Gapic
         # @param config [StartUploadConfig, ResumeUploadConfig] Configuration for this upload session
         # @param core [Core, nil] Optional Core state machine (defaults to new Core with config)
         # @param logger [Logger, nil] Optional logger override
-        def initialize client_stub:, config:, core: nil, logger: nil
+        # @param method_name [String, nil] RPC name this upload was started from, prefixed onto the
+        #   per-request logging names (`"create_media_upload.start"`, `"create_media_upload.upload"`, and
+        #   so on). Defaults to `"ResumableUpload"`.
+        def initialize client_stub:, config:, core: nil, logger: nil, method_name: nil
           @client_stub = client_stub
           @config = config
           @core = core || Core.new(config)
           @buffer = "".b
           @buffer_start_offset = 0
+          @method_name_prefix = method_name || "ResumableUpload"
 
           endpoint = client_stub.respond_to?(:endpoint) ? client_stub.endpoint : nil
           setup_logging logger: logger || (client_stub.respond_to?(:logger) ? client_stub.logger : nil),
@@ -567,7 +571,7 @@ module Gapic
             return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
 
             event = make_post_request instruction.url, headers: headers, body: instruction.body,
-                                      retry_policy: policy, method_name: "ResumableUpload.start",
+                                      retry_policy: policy, method_name: "#{@method_name_prefix}.start",
                                       start_attempt: attempt
             return event unless event.is_a? Event::HttpResponse
 
@@ -631,7 +635,7 @@ module Gapic
 
           make_post_request instruction.url, headers: headers, body: body,
                             retry_policy: @data_plane_retry_policy.dup.start!,
-                            method_name: "ResumableUpload.upload"
+                            method_name: "#{@method_name_prefix}.upload"
         end
 
         ##
@@ -649,7 +653,7 @@ module Gapic
           }
           make_post_request instruction.url, headers: headers, body: "",
                             retry_policy: @data_plane_retry_policy.dup.start!,
-                            method_name: "ResumableUpload.finalize"
+                            method_name: "#{@method_name_prefix}.finalize"
         end
 
         ##
@@ -663,7 +667,7 @@ module Gapic
           headers = { "X-Goog-Upload-Command" => "query", "Content-Length" => "0" }
           make_post_request instruction.url, headers: headers, body: "",
                             retry_policy: @control_plane_retry_policy.dup.start!,
-                            method_name: "ResumableUpload.query"
+                            method_name: "#{@method_name_prefix}.query"
         end
 
         ##
@@ -677,7 +681,7 @@ module Gapic
           headers = { "X-Goog-Upload-Command" => "cancel", "Content-Length" => "0" }
           make_post_request instruction.url, headers: headers, body: "",
                             retry_policy: @control_plane_retry_policy.dup.start!,
-                            method_name: "ResumableUpload.cancel"
+                            method_name: "#{@method_name_prefix}.cancel"
         end
 
         ##

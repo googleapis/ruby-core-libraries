@@ -123,13 +123,15 @@ class ShowcaseIntegrationTest < Minitest::Test
     Gapic::Rest::ResumableUpload::StartUploadConfig.new(**defaults, **overrides, initial_headers: headers)
   end
 
-  START_ONLY_KEYS = [:initial_url, :initial_body, :initial_headers, :chunk_size, :start_retry_policy].freeze
-
-  # Builds a session from the shared arguments and remembers the per-run arguments that #start needs,
-  # so callers can run it with `start_session session`.
-  def build_session scenario: nil, scenario_config: {}, **overrides
+  ##
+  # Builds a coordinator pointed at Showcase, with the short retry policies these tests rely on.
+  #
+  # The handle decodes nothing (`response_type: nil`), so runs return the raw response body and the tests
+  # can assert on what Showcase actually sent.
+  #
+  def build_upload scenario: nil, scenario_config: {}, initial_headers: {}, **overrides
     @progress_records = []
-    headers = (overrides.delete(:initial_headers) || {}).dup
+    headers = initial_headers.dup
     if scenario
       headers["X-Goog-Test-Scenario"] = scenario
       headers["X-Goog-Test-Scenario-Config"] = JSON.generate(
@@ -137,31 +139,39 @@ class ShowcaseIntegrationTest < Minitest::Test
       )
     end
 
-    @start_args = {
-      initial_url:        UPLOAD_PATH,
-      initial_headers:    headers,
-      start_retry_policy: FAST_RETRY,
-      chunk_size:         DEFAULT_CHUNK_SIZE
-    }.merge(overrides.slice(*START_ONLY_KEYS))
-
-    defaults = {
-      client_stub:                showcase_client_stub,
+    Gapic::ResumableUpload.new(
+      client_stub_proc:           -> { showcase_client_stub },
+      initial_request_proc:       -> { [UPLOAD_PATH, nil] },
+      response_type:              nil,
+      initial_headers:            headers,
+      start_retry_policy:         FAST_RETRY,
       control_plane_retry_policy: FAST_RETRY,
       data_plane_retry_policy:    FAST_RETRY,
-      timeout:                    10,
-      on_progress:                ->(progress) { @progress_records << progress },
-      logger:                     @logger
+      **overrides
+    )
+  end
+
+  # Default run arguments for `#start`.
+  def start_args **overrides
+    { chunk_size: DEFAULT_CHUNK_SIZE }.merge(resume_args(**overrides))
+  end
+
+  # Default run arguments for `#resume`, which takes no chunk size: a resumed run carries it on the
+  # resume handle.
+  def resume_args **overrides
+    defaults = {
+      upload_timeout: 10,
+      on_progress:    ->(progress) { @progress_records << progress }
     }
     unless overrides.key? :stream
       defaults[:stream] = StringIO.new payload(DEFAULT_PAYLOAD_SIZE)
       defaults[:upload_size] = DEFAULT_PAYLOAD_SIZE
     end
-
-    Gapic::Rest::ResumableUpload::Session.new(**defaults, **overrides.except(*START_ONLY_KEYS))
+    defaults.merge overrides
   end
 
-  def start_session session, **overrides
-    session.start(**@start_args, **overrides)
+  def resume_handle_for upload_url, chunk_size: DEFAULT_CHUNK_SIZE
+    Gapic::Rest::ResumableUpload::ResumeHandle.new upload_url: upload_url, chunk_size: chunk_size
   end
 
   def raw_start scenario: nil, scenario_config: {}, upload_size: nil, headers: {}

@@ -219,4 +219,68 @@ class RetryPoliciesTest < Minitest::Test
     err_no_code = RuntimeError.new "generic network error"
     refute policy.retry_error?(err_no_code)
   end
+
+  # ============================================================================
+  # SUT: start_retry_policy_for
+  # ============================================================================
+
+  def test_start_retry_policy_for_always_carries_the_call_timeout
+    options = Gapic::CallOptions.new timeout: 17
+
+    assert_equal({ timeout: 17 }, Gapic::Rest::ResumableUpload.start_retry_policy_for(options))
+  end
+
+  def test_start_retry_policy_for_carries_a_nil_timeout
+    assert_equal({ timeout: nil }, Gapic::Rest::ResumableUpload.start_retry_policy_for(Gapic::CallOptions.new))
+  end
+
+  def test_start_retry_policy_for_tolerates_nil_options
+    assert_equal({ timeout: nil }, Gapic::Rest::ResumableUpload.start_retry_policy_for(nil))
+  end
+
+  def test_start_retry_policy_for_copies_only_customized_backoff_settings
+    options = Gapic::CallOptions.new timeout: 5, retry_policy: { initial_delay: 0.5 }
+
+    overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
+
+    assert_equal 0.5, overrides[:initial_delay]
+    refute overrides.key?(:max_delay)
+    refute overrides.key?(:multiplier)
+  end
+
+  def test_start_retry_policy_for_treats_empty_retry_codes_as_unset
+    options = Gapic::CallOptions.new retry_policy: { initial_delay: 0.5 }
+
+    refute Gapic::Rest::ResumableUpload.start_retry_policy_for(options).key?(:retry_codes)
+  end
+
+  def test_start_retry_policy_for_copies_retry_codes_when_given
+    options = Gapic::CallOptions.new retry_policy: { retry_codes: ["UNAVAILABLE"] }
+
+    overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
+
+    assert_equal [Gapic::Common::ErrorCodes::ERROR_STRING_MAPPING["UNAVAILABLE"]], overrides[:retry_codes]
+  end
+
+  # Applying the overrides to the initiation defaults must leave the missing-status-header predicate in
+  # place: that is the whole reason the conversion returns a Hash rather than a policy object.
+  def test_start_retry_policy_for_overrides_leave_the_start_predicate_in_place
+    options = Gapic::CallOptions.new timeout: 5, retry_policy: { initial_delay: 0.5 }
+    overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
+
+    policy = Gapic::Common::RetryPolicy.new(**overrides).apply_defaults RetryPolicies::START_DEFAULTS
+
+    assert_equal 0.5, policy.initial_delay
+    assert_equal 5, policy.timeout
+    assert_same RetryPolicies::START_PREDICATE, policy.retry_predicate
+  end
+
+  def test_start_retry_policy_for_rejects_a_proc_retry_policy
+    options = Gapic::CallOptions.new retry_policy: ->(_error) { true }
+
+    error = assert_raises ArgumentError do
+      Gapic::Rest::ResumableUpload.start_retry_policy_for options
+    end
+    assert_match(/cannot derive an initiation retry policy/, error.message)
+  end
 end
