@@ -1,5 +1,11 @@
 # Release History
 
+### 1.4.0 (2026-09-17)
+
+#### Features
+
+* add custom predicate matching to RetryPolicy ([#59](https://github.com/googleapis/ruby-core-libraries/issues/59)) 
+
 ### 1.3.0 (2026-03-05)
 
 #### Features
