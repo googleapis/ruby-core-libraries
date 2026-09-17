@@ -67,6 +67,10 @@ module Gapic
         log(Logger::DEBUG, &)
       end
 
+      def warn(&)
+        log(Logger::WARN, &)
+      end
+
       ##
       # @private
       # Builder for a log entry, passed to {StubLogger#log}.
