@@ -428,8 +428,19 @@ class DriverTest < Minitest::Test
     assert_equal body, req[:body]
   end
 
+  # Core double holding a fixed State, for exercising the Driver readers without running the protocol.
+  # `Core` offers no way to set a state, so the readers are driven through `Driver.new(core:)` instead.
+  class StateCore
+    attr_accessor :state
+
+    def initialize state
+      @state = state
+    end
+  end
+
   # `upload_url` reports the session URL whatever the lifecycle status, while `resume_handle` reports one
-  # only while the upload is still resumable.
+  # only while the upload is still resumable. The status-by-status truth table lives in the Rules tests;
+  # this asserts that the Driver readers delegate to the current state.
   def test_upload_url_and_resume_handle_across_statuses
     config = StartUploadConfig.new(
       initial_url: "https://example.com/upload",
@@ -437,25 +448,19 @@ class DriverTest < Minitest::Test
       upload_size: 4,
       chunk_size:  4
     )
-    driver = Driver.new client_stub: FakeClientStub.new([]), config: config
+    core = StateCore.new Core.new(config).state
+    driver = Driver.new client_stub: FakeClientStub.new([]), config: config, core: core
 
     assert_nil driver.upload_url
 
-    set_driver_status driver, :transmission_sending
+    core.state = core.state.with status: :transmission_sending, upload_url: "https://upload.example.com/sess1"
     assert_equal "https://upload.example.com/sess1", driver.upload_url
     assert_equal "https://upload.example.com/sess1", driver.resume_handle.upload_url
 
     [:rejected, :cancelled, :success].each do |status|
-      set_driver_status driver, status
+      core.state = core.state.with status: status
       assert_equal "https://upload.example.com/sess1", driver.upload_url
       assert_nil driver.resume_handle
     end
-  end
-
-  def set_driver_status driver, status
-    driver.core.instance_variable_set(
-      :@state,
-      driver.core.state.with(status: status, upload_url: "https://upload.example.com/sess1")
-    )
   end
 end

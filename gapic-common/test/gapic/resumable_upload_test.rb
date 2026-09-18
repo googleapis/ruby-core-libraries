@@ -397,6 +397,26 @@ class ResumableUploadTest < Minitest::Test
     assert_equal handle, upload.resume_handle
   end
 
+  def test_a_second_run_replaces_the_previous_runs_resume_handle
+    stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
+                                   Faraday::ConnectionFailed.new("boom"),
+                                   Faraday::ConnectionFailed.new("boom")]
+    upload = build_upload stub: stub
+    assert_raises RequestFailedError do
+      start_upload upload, stream: StringIO.new("01"), upload_size: 2
+    end
+    refute_nil upload.resume_handle
+
+    # The second run fails at initiation, so it establishes no upload of its own. Its driver still takes
+    # over the reader: the previous run's handle is replaced, not kept as a fallback.
+    assert_raises RequestFailedError do
+      start_upload upload, stream: StringIO.new("01"), upload_size: 2
+    end
+
+    assert_nil upload.resume_handle
+    refute upload.resumable?
+  end
+
   # ============================================================================
   # 4. Resume forms
   # ============================================================================
