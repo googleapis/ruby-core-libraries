@@ -15,3 +15,7 @@ vendor
 *~
 .idea
 *.iml
+
+# Modified Gemfiles toys writes while running a step; bundler re-creates the lock
+# just after toys deletes it, so a stray one is left behind by every `toys ci`.
+.toys-tmp-gemfile-*
