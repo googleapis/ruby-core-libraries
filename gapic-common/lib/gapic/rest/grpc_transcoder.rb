@@ -127,7 +127,7 @@ module Gapic
       end
 
       # Validates a user-supplied parameter value bound to a standard (*) or path (**) URI template variable
-      # to prevent directory traversal and parameter injection exploits.
+      # to prevent directory traversal exploits.
       #
       # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
       # @param field_value [String] The parameter value to validate.
@@ -140,22 +140,19 @@ module Gapic
       # value is a directory traversal segment (. or ..).
       #
       # Validation Mechanism:
-      # 1. URL-decodes the parameter value to ensure all encoded dot (`%2e` / `%2E`)
-      #    and slash (`%2f` / `%2F`) segments are expanded.
-      # 2. Splits the decoded parameter value by slash (`/`) using `-1` limit to preserve all segments.
-      # 3. Checks each segment. If any segment matches `.` or `..`, it immediately raises
+      # 1. Splits the parameter value by slash (`/`) using `-1` limit to preserve all segments.
+      # 2. Checks each segment. If any segment matches `.` or `..`, it immediately raises
       #    a `Gapic::Common::Error`, aborting the request.
-      # 4. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
-      #    by this linter and passed to the server, which handles normalization or returns 400.
+      # 3. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
+      #    by this validator and passed to the server, which handles normalization or returns 400.
       #
       # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
       # @param field_value [String] The parameter value to validate.
       # @raise [Gapic::Common::Error] If validation fails.
       def validate_path_binding! field_binding, field_value
-        unescaped_value = CGI.unescape field_value
-        segments = unescaped_value.split("/", -1)
+        segments = field_value.split("/", -1)
         segments.each do |segment|
-          next unless segment == "." || segment == ".."
+          next unless [".", ".."].include? segment
           if field_binding.preserve_slashes
             raise ::Gapic::Common::Error,
                   "Value for #{field_binding.field_path} must not contain segments that are exactly . or .."

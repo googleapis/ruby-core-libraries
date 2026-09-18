@@ -351,17 +351,15 @@ class GrpcTranscoderTest < Minitest::Test
     end
     assert_equal "Invalid value . for sub_request.name", err.message
 
-    # URL-encoded traversal segment '%2e%2e' in standard parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # URL-encoded traversal segment '%2e%2e' in standard parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_std.transcode example_request(name: "p1", sub_name: "%2e%2e")
-    end
-    assert_equal "Invalid value .. for sub_request.name", err.message
+    assert_equal "/v3/projects/p1/webhooks/%252e%252e", uri
 
-    # URL-encoded traversal segment '%2e' in standard parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # URL-encoded traversal segment '%2e' in standard parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_std.transcode example_request(name: "p1", sub_name: "%2e")
-    end
-    assert_equal "Invalid value . for sub_request.name", err.message
+    assert_equal "/v3/projects/p1/webhooks/%252e", uri
 
     # Slashes in standard parameter should fail matching (regex rejects slashes)
     err = assert_raises ::Gapic::Common::Error do
@@ -404,29 +402,25 @@ class GrpcTranscoderTest < Minitest::Test
     end
     assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
 
-    # URL-encoded segment '%2e%2e' in path parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # URL-encoded segment '%2e%2e' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e/doc2", sub_name: "col")
-    end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e%252e/doc2/col", uri
 
-    # URL-encoded segment '%2e' in path parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # URL-encoded segment '%2e' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e/a", sub_name: "col")
-    end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e/a/col", uri
 
-    # URL-encoded traversal slashes '..%2f..%2f' in path parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # URL-encoded traversal slashes '..%2f..%2f' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/..%2f..%2fescape-db", sub_name: "col")
-    end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "/v1/projects/p/databases/d/documents/doc/..%252f..%252fescape-db/col", uri
 
-    # Mixed URL-encoded dots and slashes '%2e%2e%2f%2e%2e%2f' in path parameter should fail
-    err = assert_raises ::Gapic::Common::Error do
+    # Mixed URL-encoded dots and slashes '%2e%2e%2f%2e%2e%2f' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e%2f%2e%2e%2fescape-db", sub_name: "col")
-    end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e%252e%252f%252e%252e%252fescape-db/col", uri
   end
 
   private
