@@ -26,6 +26,10 @@ require "gapic/common"
 require "gapic/rest"
 require "gapic/rest/resumable_upload"
 
+# The protobuf fixtures live with the unit tests. The decoding test needs a real generated message class,
+# and compiling a second one for the integration suite would buy nothing.
+require File.expand_path("../test/fixtures/fixture_pb", __dir__)
+
 ##
 # Base class for Showcase integration tests.
 #
@@ -95,41 +99,16 @@ class ShowcaseIntegrationTest < Minitest::Test
     )
   end
 
-  def build_config scenario: nil, scenario_config: {}, **overrides
-    @progress_records = []
-    headers = (overrides[:initial_headers] || {}).dup
-    if scenario
-      headers["X-Goog-Test-Scenario"] = scenario
-      headers["X-Goog-Test-Scenario-Config"] = JSON.generate(
-        { "client_uuid" => SecureRandom.uuid }.merge(scenario_config)
-      )
-    end
-
-    defaults = {
-      initial_url:                UPLOAD_PATH,
-      initial_headers:            headers,
-      start_retry_policy:         FAST_RETRY,
-      control_plane_retry_policy: FAST_RETRY,
-      data_plane_retry_policy:    FAST_RETRY,
-      timeout:                    10,
-      chunk_size:                 DEFAULT_CHUNK_SIZE,
-      on_progress:                ->(progress) { @progress_records << progress }
-    }
-    unless overrides.key? :stream
-      defaults[:stream] = StringIO.new payload(DEFAULT_PAYLOAD_SIZE)
-      defaults[:upload_size] = DEFAULT_PAYLOAD_SIZE
-    end
-
-    Gapic::Rest::ResumableUpload::StartUploadConfig.new(**defaults, **overrides, initial_headers: headers)
-  end
-
   ##
   # Builds a coordinator pointed at Showcase, with the short retry policies these tests rely on.
   #
-  # The handle decodes nothing (`response_type: nil`), so runs return the raw response body and the tests
-  # can assert on what Showcase actually sent.
+  # Runs return the raw response body by default (`response_type: nil`), so tests can assert on what
+  # Showcase actually sent; a test that cares about decoding passes a message class instead.
   #
-  def build_upload scenario: nil, scenario_config: {}, initial_headers: {}, **overrides
+  # Any constructor argument can be overridden, including with `nil` — the suites that measure real
+  # backoff pass `start_retry_policy: nil` to get the protocol's own policy.
+  #
+  def build_upload scenario: nil, scenario_config: {}, initial_headers: {}, initial_url: UPLOAD_PATH, **overrides
     @progress_records = []
     headers = initial_headers.dup
     if scenario
@@ -139,16 +118,16 @@ class ShowcaseIntegrationTest < Minitest::Test
       )
     end
 
-    Gapic::ResumableUpload.new(
+    defaults = {
       client_stub_proc:           -> { showcase_client_stub },
-      initial_request_proc:       -> { [UPLOAD_PATH, nil] },
+      initial_request_proc:       -> { [initial_url, nil] },
       response_type:              nil,
-      initial_headers:            headers,
       start_retry_policy:         FAST_RETRY,
       control_plane_retry_policy: FAST_RETRY,
-      data_plane_retry_policy:    FAST_RETRY,
-      **overrides
-    )
+      data_plane_retry_policy:    FAST_RETRY
+    }
+
+    Gapic::ResumableUpload.new(**defaults, **overrides, initial_headers: headers)
   end
 
   # Default run arguments for `#start`.

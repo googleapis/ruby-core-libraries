@@ -19,30 +19,26 @@ require "json"
 require "stringio"
 
 ##
-# Integration tests for chunk granularity alignment against Showcase.
+# Integration tests for chunk granularity alignment against Showcase, driven through
+# ::Gapic::ResumableUpload.
 #
 class ChunkGranularityTest < ShowcaseIntegrationTest
   # Verifies chunk size alignment to server-specified granularity (300_000 -> 299_776) and progress notifications.
   def test_chunk_granularity_alignment
     size = 1_000_000
-    config = build_config(
-      scenario:    "chunk_granularity",
-      stream:      StringIO.new(payload(size)),
-      upload_size: size,
-      chunk_size:  300_000,
-      timeout:     5
-    )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
+    upload = build_upload scenario: "chunk_granularity"
+    result = upload.start(**start_args(stream:         StringIO.new(payload(size)),
+                                       upload_size:    size,
+                                       chunk_size:     300_000,
+                                       upload_timeout: 5))
     parsed = JSON.parse result
 
     assert_equal size, parsed["size"]
     assert_equal [0, 0, 299_776, 599_552, 899_328, 899_328, 1_000_000], offsets
     assert_equal [:initiating, :uploading, :uploading, :uploading, :uploading, :finalizing, :completed], phases
+
+    # A finalized upload leaves nothing to resume, alignment or not.
+    assert_nil upload.resume_handle
   end
 end

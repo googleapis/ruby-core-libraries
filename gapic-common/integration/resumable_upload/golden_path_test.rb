@@ -19,26 +19,17 @@ require "json"
 require "stringio"
 
 ##
-# Golden path integration tests for ResumableUpload Driver against Showcase.
+# Golden path integration tests against Showcase, driven through ::Gapic::ResumableUpload.
 #
 class GoldenPathTest < ShowcaseIntegrationTest
   def test_multi_chunk_known_size
     size = 1_500_000
     chunk_size = 524_288
-    stream = StringIO.new payload(size)
 
-    config = build_config(
-      stream: stream,
-      upload_size: size,
-      chunk_size: chunk_size
-    )
-
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config: config
-    )
-
-    result = driver.run
+    upload = build_upload
+    result = upload.start(**start_args(stream:      StringIO.new(payload(size)),
+                                       upload_size: size,
+                                       chunk_size:  chunk_size))
     parsed = JSON.parse result
 
     assert_equal size, parsed["size"]
@@ -54,20 +45,11 @@ class GoldenPathTest < ShowcaseIntegrationTest
 
   def test_small_upload_default_chunk_size
     size = 100_000
-    stream = StringIO.new payload(size)
 
-    config = build_config(
-      stream: stream,
-      upload_size: size,
-      chunk_size: nil # use default chunk size
-    )
-
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config: config
-    )
-
-    result = driver.run
+    upload = build_upload
+    result = upload.start(**start_args(stream:      StringIO.new(payload(size)),
+                                       upload_size: size,
+                                       chunk_size:  nil)) # use default chunk size
     parsed = JSON.parse result
 
     assert_equal size, parsed["size"]
@@ -82,19 +64,10 @@ class GoldenPathTest < ShowcaseIntegrationTest
   def test_standalone_finalize_unseekable_stream
     chunk_size = 262_144
     size = 3 * chunk_size
-    stream = UnseekableStream.new payload(size)
 
-    config = build_config(
-      stream: stream,
-      chunk_size: chunk_size
-    )
-
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config: config
-    )
-
-    result = driver.run
+    upload = build_upload
+    result = upload.start(**start_args(stream:     UnseekableStream.new(payload(size)),
+                                       chunk_size: chunk_size))
     parsed = JSON.parse result
 
     assert_equal size, parsed["size"]
@@ -107,5 +80,20 @@ class GoldenPathTest < ShowcaseIntegrationTest
       Gapic::Rest::ResumableUpload::Progress.new(phase: :finalizing, bytes_uploaded: 786_432, total_bytes: nil),
       Gapic::Rest::ResumableUpload::Progress.new(phase: :completed, bytes_uploaded: 786_432, total_bytes: 786_432)
     ], progress_records
+  end
+
+  ##
+  # The decode path a generated client actually takes: a real message class, against a live response that
+  # carries a field the message does not declare. That field only survives because the coordinator decodes
+  # with `ignore_unknown_fields: true` — without it, `decode_json` would raise.
+  #
+  def test_decodes_the_final_body_into_the_response_type
+    size = 100_000
+
+    upload = build_upload response_type: Gapic::Examples::User
+    response = upload.start(**start_args(stream: StringIO.new(payload(size)), upload_size: size))
+
+    assert_instance_of Gapic::Examples::User, response
+    refute_empty response.name
   end
 end
