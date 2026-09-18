@@ -118,17 +118,15 @@ GEM
     lint_roller (1.1.0)
     logger (1.7.0)
     method_source (1.1.0)
-    minitest (5.27.0)
-    minitest-autotest (1.2.0)
-      minitest-server (~> 1.0)
-      path_expander (~> 2.0)
+    minitest (6.0.6)
+      drb (~> 2.0)
+      prism (~> 1.5)
+    minitest-autotest (1.2.2)
+      minitest (~> 6.0)
     minitest-focus (1.4.1)
       minitest (> 5.0)
     minitest-rg (5.4.0)
       minitest (>= 5.0, < 7)
-    minitest-server (1.0.10)
-      drb (~> 2.0)
-      minitest (~> 5.16)
     net-http (0.9.1)
       uri (>= 0.11.1)
     os (1.1.4)
@@ -137,7 +135,6 @@ GEM
     parser (3.3.12.0)
       ast (~> 2.4.1)
       racc
-    path_expander (2.0.1)
     prism (1.9.0)
     pry (0.16.0)
       coderay (~> 1.1)
@@ -195,7 +192,7 @@ DEPENDENCIES
   google-style (>= 1.31.0, < 1.33)
   googleapis-common-protos-types (~> 1.15)
   grpc-tools (~> 1.65)
-  minitest (~> 5.24)
+  minitest (>= 5.24, < 7)
   minitest-autotest (~> 1.0)
   minitest-focus (~> 1.4)
   minitest-rg (~> 5.3)
@@ -251,17 +248,15 @@ CHECKSUMS
   lint_roller (1.1.0) sha256=2c0c845b632a7d172cb849cc90c1bce937a28c5c8ccccb50dfd46a485003cc87
   logger (1.7.0) sha256=196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203
   method_source (1.1.0) sha256=181301c9c45b731b4769bc81e8860e72f9161ad7d66dd99103c9ab84f560f5c5
-  minitest (5.27.0) sha256=2d3b17f8a36fe7801c1adcffdbc38233b938eb0b4966e97a6739055a45fa77d5
-  minitest-autotest (1.2.0) sha256=60d031cba705215450662b0060f03f96507682b346a19c27f6756751ad92d2b4
+  minitest (6.0.6) sha256=153ea36d1d987a62942382b61075745042a2b3123b1cd48f4c3675af9cc7d6f1
+  minitest-autotest (1.2.2) sha256=ce9844aae6a47f24ce5decb81a02555098185d71d389396112f59d591164583f
   minitest-focus (1.4.1) sha256=394517cbe2dcb2d992d8ffc41a3b2b6315777a4daa69239de4fefe7110dd810e
   minitest-rg (5.4.0) sha256=54d42bb8ce876381245be5866f3c1dd704ef79c06ba5c9ff280c0aa28c56effb
-  minitest-server (1.0.10) sha256=275439bf3ffc433fcbe161733248f1d9749ebf122892cf010bf864aaa95cef75
   net-http (0.9.1) sha256=25ba0b67c63e89df626ed8fac771d0ad24ad151a858af2cc8e6a716ca4336996
   os (1.1.4) sha256=57816d6a334e7bd6aed048f4b0308226c5fb027433b67d90a9ab435f35108d3f
   ostruct (0.6.3) sha256=95a2ed4a4bd1d190784e666b47b2d3f078e4a9efda2fccf18f84ddc6538ed912
   parallel (1.28.0) sha256=33e6de1484baf2524792d178b0913fc8eb94c628d6cfe45599ad4458c638c970
   parser (3.3.12.0) sha256=21a6d7f755d5a24dfbdc6e6b772e4e879a52e7631a88bc5a3a134606052c9828
-  path_expander (2.0.1) sha256=2de201164bff4719cc4d0b3767286e9977cc832a59c4d70abab571ec86cb41e4
   prism (1.9.0) sha256=7b530c6a9f92c24300014919c9dcbc055bf4cdf51ec30aed099b06cd6674ef85
   pry (0.16.0) sha256=d76c69065698ed1f85e717bd33d7942c38a50868f6b0673c636192b3d1b6054e
   pstore (0.2.1) sha256=03904d0f2c66579e96d1e6704cdabc0c88df7ea8ed8782d9f3569f6f6c702c1a
