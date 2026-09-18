@@ -310,6 +310,11 @@ module Gapic
     # `nil` before the first run, and after any run that left nothing to resume: a completed upload is
     # finalized, and rejected and cancelled uploads are too.
     #
+    # Each run replaces this value rather than accumulating handles, so it always describes the most
+    # recent one. Starting a second upload therefore discards whatever the previous run left behind —
+    # persist the handle first if the earlier upload still matters. A call that fails while building its
+    # configuration does not count as a run: it never reaches a driver, so the earlier value survives.
+    #
     # @return [Gapic::Rest::ResumableUpload::ResumeHandle, nil]
     def resume_handle
       @mutex.synchronize { @driver&.resume_handle }

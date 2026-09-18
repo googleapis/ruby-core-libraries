@@ -149,7 +149,7 @@ module Gapic
       #
       # @example
       #   begin
-      #     session.start initial_url: url
+      #     upload.start stream: io, upload_size: size
       #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
       #     retry_later e.resume_handle if e.resume_handle
       #     raise

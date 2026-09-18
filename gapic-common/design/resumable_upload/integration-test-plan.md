@@ -20,6 +20,7 @@ flowchart TD
     end
 
     subgraph SUT["System Under Test"]
+        Upload["::Gapic::ResumableUpload<br/>(Coordinator)"]
         Driver["Gapic::Rest::ResumableUpload::Driver"]
         Stub["Gapic::Rest::ClientStub<br/>(raise_faraday_errors: false)"]
     end
@@ -33,7 +34,9 @@ flowchart TD
     Toys --> BaseClass
     BaseClass --> PayloadGen
     BaseClass --> TraceLog
-    BaseClass --> Driver
+    BaseClass -->|"build_upload / start_args / resume_args"| Upload
+    BaseClass -->|"build_config (protocol-detail suites)"| Driver
+    Upload -->|"one per run"| Driver
     Driver --> Stub
     Stub <-->|"HTTP POST / PUT (REST)"| Showcase
 ```

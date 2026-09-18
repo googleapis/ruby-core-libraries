@@ -6,7 +6,9 @@ The Resumable Upload Protocol (RUP) implementation in `gapic-common` is structur
 
 ```mermaid
 graph TD
-    Client[Client Code] -->|StartUploadConfig| Driver
+    Client[Client Code] -->|start / resume| Coordinator["::Gapic::ResumableUpload <br/> Coordinator"]
+    Coordinator -->|StartUploadConfig / ResumeUploadConfig| Driver
+    Driver -->|ResumeHandle, decoded response| Coordinator
     subgraph Gapic::Rest::ResumableUpload
         Driver[Driver <br/> Synchronous I/O Adapter] -->|Events| Core[Core <br/> State Container]
         Core -->|Instructions| Driver
