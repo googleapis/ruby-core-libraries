@@ -19,24 +19,21 @@ require "json"
 require "stringio"
 
 ##
-# Suite B: Integration tests for Category 1 transient retries and Category 2 error recovery against Showcase.
+# Suite B: Integration tests for Category 1 transient retries and Category 2 error recovery against
+# Showcase, driven through ::Gapic::ResumableUpload. The short data- and control-plane policies come from
+# the coordinator's `@private` constructor arguments, so these run on the production code path.
 #
 class ErrorRecoveryTest < ShowcaseIntegrationTest
   SCENARIO = "non_fatal_error_on_chunk_upload"
 
   # B1. Verifies Category 1 transient error (503) is retried transparently by FAST_RETRY without entering recovery.
   def test_cat1_error_retried_transparently
-    config = build_config(
+    upload = build_upload(
       scenario:        SCENARIO,
       scenario_config: { error_code: 503, failure_count: 1, after_offset: 0 }
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
+    result = upload.start(**start_args)
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -47,17 +44,12 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
 
   # B2. Verifies simple Category 2 error (409) at offset 0 triggers recovery query and resumes upload to completion.
   def test_simple_cat2_error_recovery
-    config = build_config(
+    upload = build_upload(
       scenario:        SCENARIO,
       scenario_config: { error_code: 409, failure_count: 1, after_offset: 0 }
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
+    result = upload.start(**start_args)
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -70,17 +62,12 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
 
   # B3. Verifies two consecutive Category 2 recoveries (409) on chunk 2 at offset 262_144.
   def test_two_consecutive_cat2_recoveries_on_chunk_2
-    config = build_config(
+    upload = build_upload(
       scenario:        SCENARIO,
       scenario_config: { error_code: 409, failure_count: 2, after_offset: 262_144 }
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
+    result = upload.start(**start_args)
     parsed = JSON.parse result
 
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
@@ -99,19 +86,12 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
   # B4. Verifies Category 2 error (409) on the finalizing chunk (upload, finalize) recovers and completes.
   def test_cat2_failure_on_finalizing_chunk
     size = (DEFAULT_CHUNK_SIZE * 3) - 100
-    config = build_config(
+    upload = build_upload(
       scenario:        SCENARIO,
-      scenario_config: { error_code: 409, failure_count: 1, after_offset: DEFAULT_CHUNK_SIZE * 2 },
-      stream:          StringIO.new(payload(size)),
-      upload_size:     size
+      scenario_config: { error_code: 409, failure_count: 1, after_offset: DEFAULT_CHUNK_SIZE * 2 }
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
+    result = upload.start(**start_args(stream: StringIO.new(payload(size)), upload_size: size))
     parsed = JSON.parse result
 
     assert_equal size, parsed["size"]
@@ -124,19 +104,13 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
 
   # B5. Verifies unrecoverable 500 without status header triggers repeated recovery until DeadlineExceededError.
   def test_no_headers_failure_recovers_until_deadline_exceeded
-    config = build_config(
+    upload = build_upload(
       scenario:        SCENARIO,
-      scenario_config: { failure_count: 0, action_after_failures: "terminate" },
-      timeout:         1
-    )
-
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
+      scenario_config: { failure_count: 0, action_after_failures: "terminate" }
     )
 
     assert_raises Gapic::Rest::ResumableUpload::DeadlineExceededError do
-      driver.run
+      upload.start(**start_args(upload_timeout: 1))
     end
 
     assert_operator phases.count(:recovering), :>=, 2

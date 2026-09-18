@@ -16,43 +16,44 @@
 
 require "integration_helper"
 require "json"
-require "securerandom"
 require "stringio"
 
 ##
-# Suite A: Integration tests for non-fatal and fatal errors on session initiation (`start`).
+# Suite A: Integration tests for non-fatal and fatal errors on session initiation (`start`), driven
+# through ::Gapic::ResumableUpload.
 #
 class ErrorOnStartTest < ShowcaseIntegrationTest
   PAYLOAD_SIZE = 100
 
-  def build_start_error_config scenario:, scenario_config: {}, start_retry_policy: nil, **overrides
-    build_config(
+  ##
+  # Initiation is the subject here, so the plane policies are left at the protocol's own defaults and only
+  # the start policy varies. A `nil` start policy means the protocol's default backoff, which is what the
+  # timing assertions measure.
+  #
+  def build_start_error_upload scenario:, scenario_config: {}, start_retry_policy: nil, **overrides
+    build_upload(
       scenario:                   scenario,
       scenario_config:            scenario_config,
       start_retry_policy:         start_retry_policy,
       control_plane_retry_policy: nil,
       data_plane_retry_policy:    nil,
-      stream:                     StringIO.new(payload(PAYLOAD_SIZE)),
-      upload_size:                PAYLOAD_SIZE,
       **overrides
     )
   end
 
+  def start_error_args **overrides
+    start_args(stream: StringIO.new(payload(PAYLOAD_SIZE)), upload_size: PAYLOAD_SIZE, **overrides)
+  end
+
   # A1. Verifies non-fatal transient error (503) on start is retried and upload completes.
   def test_non_fatal_error_on_start_503
-    config = build_start_error_config(
+    upload = build_start_error_upload(
       scenario:           "non_fatal_error_on_start",
       scenario_config:    { error_code: 503, failure_count: 1 },
       start_retry_policy: FAST_RETRY
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
-    parsed = JSON.parse result
+    parsed = JSON.parse upload.start(**start_error_args)
 
     assert_equal PAYLOAD_SIZE, parsed["size"]
     assert_equal 1, phases.count(:initiating)
@@ -61,19 +62,13 @@ class ErrorOnStartTest < ShowcaseIntegrationTest
 
   # A2. Verifies missing status header / 400 on start is retried and upload completes.
   def test_missing_header_retriable_on_start_400
-    config = build_start_error_config(
+    upload = build_start_error_upload(
       scenario:           "non_fatal_error_on_start",
       scenario_config:    { error_code: 400, failure_count: 1 },
       start_retry_policy: FAST_RETRY
     )
 
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
-    )
-
-    result = driver.run
-    parsed = JSON.parse result
+    parsed = JSON.parse upload.start(**start_error_args)
 
     assert_equal PAYLOAD_SIZE, parsed["size"]
     assert_equal 1, phases.count(:initiating)
@@ -82,20 +77,14 @@ class ErrorOnStartTest < ShowcaseIntegrationTest
 
   # A3. Verifies retry exhaustion on start with high failure count times out within ~3s without uploading.
   def test_retry_exhaustion_on_start_times_out
-    config = build_start_error_config(
+    upload = build_start_error_upload(
       scenario:        "non_fatal_error_on_start",
-      scenario_config: { error_code: 503, failure_count: 10_000 },
-      timeout:         3
-    )
-
-    driver = Gapic::Rest::ResumableUpload::Driver.new(
-      client_stub: showcase_client_stub,
-      config:      config
+      scenario_config: { error_code: 503, failure_count: 10_000 }
     )
 
     t0 = Process.clock_gettime Process::CLOCK_MONOTONIC
     err = assert_raises Gapic::Common::Error do
-      driver.run
+      upload.start(**start_error_args(upload_timeout: 3))
     end
     t1 = Process.clock_gettime Process::CLOCK_MONOTONIC
 
@@ -111,19 +100,14 @@ class ErrorOnStartTest < ShowcaseIntegrationTest
   # A4. Verifies fatal errors on start (403 and 404) immediately raise BadResponseError in < 0.5s without retrying.
   def test_fatal_error_on_start_raises_bad_response_immediately
     [403, 404].each do |code|
-      config = build_start_error_config(
+      upload = build_start_error_upload(
         scenario:        "fatal_error_on_start",
         scenario_config: { error_code: code }
       )
 
-      driver = Gapic::Rest::ResumableUpload::Driver.new(
-        client_stub: showcase_client_stub,
-        config:      config
-      )
-
       t0 = Process.clock_gettime Process::CLOCK_MONOTONIC
       err = assert_raises Gapic::Rest::ResumableUpload::BadResponseError do
-        driver.run
+        upload.start(**start_error_args)
       end
       t1 = Process.clock_gettime Process::CLOCK_MONOTONIC
 
@@ -134,22 +118,18 @@ class ErrorOnStartTest < ShowcaseIntegrationTest
     end
   end
 
-  # A5. Verifies sequential executions with fresh client UUIDs remain isolated.
+  # A5. Verifies sequential executions with fresh client UUIDs remain isolated. Each coordinator carries its
+  # own UUID in the scenario header, so this stays a test of server-side isolation rather than of reuse;
+  # reuse of a single coordinator is covered in the resume suite.
   def test_sequential_runs_session_isolation
     2.times do
-      config = build_start_error_config(
+      upload = build_start_error_upload(
         scenario:           "non_fatal_error_on_start",
         scenario_config:    { error_code: 503, failure_count: 1 },
         start_retry_policy: FAST_RETRY
       )
 
-      driver = Gapic::Rest::ResumableUpload::Driver.new(
-        client_stub: showcase_client_stub,
-        config:      config
-      )
-
-      result = driver.run
-      parsed = JSON.parse result
+      parsed = JSON.parse upload.start(**start_error_args)
 
       assert_equal PAYLOAD_SIZE, parsed["size"]
       assert_equal 1, phases.count(:initiating)
