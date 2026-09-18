@@ -195,7 +195,7 @@ module Gapic
         # * `:error` - terminal for this run; `last_error` holds the exception.
         #
         # `:success`, `:cancelled` and `:rejected` are finalized and yield no {ResumeHandle}. `:error` ends the
-        # run but may still be resumable from a fresh session; see {Rules.resume_handle_from}.
+        # run but may still be resumable from a fresh upload; see {Rules.resume_handle_from}.
         #
         # @return [Array<Symbol>]
         STATUSES = [
