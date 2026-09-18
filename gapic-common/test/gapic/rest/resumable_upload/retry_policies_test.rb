@@ -300,4 +300,24 @@ class RetryPoliciesTest < Minitest::Test
     assert_equal Gapic::Common::RetryPolicy::DEFAULT_MAX_DELAY, overrides[:max_delay]
     assert_equal Gapic::Common::RetryPolicy::DEFAULT_MULTIPLIER, overrides[:multiplier]
   end
+
+  # `retry_predicate` and `timeout` cannot be expressed through a Hash: Gapic::CallOptions converts one
+  # into a Gapic::CallOptions::RetryPolicy, whose initializer takes neither. A policy object passed
+  # straight in is left alone, and is the only route by which either setting arrives here.
+  def test_start_retry_policy_for_carries_a_caller_retry_predicate
+    predicate = ->(_error) { true }
+    options = Gapic::CallOptions.new retry_policy: Gapic::Common::RetryPolicy.new(retry_predicate: predicate)
+
+    overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
+    policy = Gapic::Common::RetryPolicy.new(**overrides).apply_defaults RetryPolicies::START_DEFAULTS
+
+    # The caller's predicate replaces the initiation one wholesale; the two are not composed.
+    assert_same predicate, policy.retry_predicate
+  end
+
+  def test_start_retry_policy_for_call_timeout_displaces_a_policy_timeout
+    options = Gapic::CallOptions.new timeout: 5, retry_policy: Gapic::Common::RetryPolicy.new(timeout: 900)
+
+    assert_equal 5, Gapic::Rest::ResumableUpload.start_retry_policy_for(options)[:timeout]
+  end
 end

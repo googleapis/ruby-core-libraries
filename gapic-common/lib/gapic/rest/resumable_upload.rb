@@ -73,15 +73,20 @@ module Gapic
       # predicate that treats a response missing `X-Goog-Upload-Status` as retriable gateway noise, and
       # handing over an object would silently drop it.
       #
-      # `timeout` is always set, and becomes the local deadline of the initiation request alone — the
-      # whole-upload budget is separate and is not derived here. Without it, initiation would inherit
-      # {Gapic::Common::RetryPolicy::DEFAULT_TIMEOUT} (one hour), because `Gapic::CallOptions::RetryPolicy`
-      # never populates `@timeout` even though it subclasses {Gapic::Common::RetryPolicy}.
+      # `timeout` is the one setting the caller cannot express here: it is set unconditionally from the
+      # call's own timeout and becomes the local deadline of the initiation request alone — the
+      # whole-upload budget is separate and is not derived here. A `timeout` inside the caller's retry
+      # policy is inert at the call layer (`Gapic::CallOptions::RetryPolicy` never populates `@timeout`,
+      # and `RpcCall` deadlines on `CallOptions#timeout`), so honouring it here would invent a meaning it
+      # has nowhere else. With no call timeout, initiation falls back to
+      # {Gapic::Common::RetryPolicy::DEFAULT_TIMEOUT} — one hour.
       #
       # Everything else the caller set is carried across as-is, by asking the policy what it carries
-      # ({Gapic::Common::RetryPolicy#overrides}) rather than inferring it from the readers. Two settings
-      # are dropped: the policy's own `timeout`, which is not the initiation deadline and would otherwise
-      # displace the call's, and `retry_predicate`, so the initiation predicate stays in place.
+      # ({Gapic::Common::RetryPolicy#overrides}) rather than inferring it from the readers, so a choice
+      # that happens to equal a library default still lands. That includes `retry_predicate`: a caller
+      # who supplies one **replaces** the initiation predicate rather than composing with it, and so
+      # gives up the missing-`X-Goog-Upload-Status` handling. There is no chaining — a predicate that
+      # returns `nil` falls through to `retry_codes`, not to the predicate it displaced.
       #
       # @param options [Gapic::CallOptions, nil] Per-call options from a generated client method
       # @return [Hash] Overrides for the initiation retry policy
@@ -95,7 +100,7 @@ module Gapic
                 "use a Gapic::Common::RetryPolicy or a Hash of retry settings"
         end
 
-        { timeout: options&.timeout }.merge(policy&.overrides&.except(:timeout, :retry_predicate) || {})
+        (policy&.overrides || {}).merge timeout: options&.timeout
       end
     end
   end
