@@ -283,4 +283,21 @@ class RetryPoliciesTest < Minitest::Test
     end
     assert_match(/cannot derive an initiation retry policy/, error.message)
   end
+
+  # A setting the caller chose deliberately carries across even when it happens to equal the library
+  # default. Asking the policy what it holds, rather than comparing its readers against a default
+  # policy, is what makes that possible.
+  def test_start_retry_policy_for_carries_settings_that_equal_the_library_defaults
+    options = Gapic::CallOptions.new retry_policy: {
+      initial_delay: Gapic::Common::RetryPolicy::DEFAULT_INITIAL_DELAY,
+      max_delay:     Gapic::Common::RetryPolicy::DEFAULT_MAX_DELAY,
+      multiplier:    Gapic::Common::RetryPolicy::DEFAULT_MULTIPLIER
+    }
+
+    overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
+
+    assert_equal Gapic::Common::RetryPolicy::DEFAULT_INITIAL_DELAY, overrides[:initial_delay]
+    assert_equal Gapic::Common::RetryPolicy::DEFAULT_MAX_DELAY, overrides[:max_delay]
+    assert_equal Gapic::Common::RetryPolicy::DEFAULT_MULTIPLIER, overrides[:multiplier]
+  end
 end

@@ -19,6 +19,12 @@ module Gapic
     ##
     # Gapic Common retry policy base class.
     #
+    # A policy distinguishes "set to this value" from "never set". Every setting is stored as `nil`
+    # until someone supplies it, and the reader for each substitutes the corresponding `DEFAULT_`
+    # constant on the way out, so a reader can never say which of the two happened. That distinction is
+    # what lets {#apply_defaults} fill in gaps without overwriting a caller's choices, and {#overrides}
+    # report what a caller actually asked for.
+    #
     class RetryPolicy
       # @return [Numeric] Default initial delay in seconds.
       DEFAULT_INITIAL_DELAY = 1
@@ -109,6 +115,34 @@ module Gapic
       # @return [Proc, nil]
       def retry_predicate
         @retry_predicate
+      end
+
+      ##
+      # @private
+      # The settings this policy actually carries, as keyword arguments for {RetryPolicy.initialize}.
+      #
+      # A key is present only if that setting was explicitly supplied; a key that was never set is
+      # absent rather than `nil`. This is what the readers cannot tell you — {#max_delay} returns
+      # {DEFAULT_MAX_DELAY} whether the caller chose that number or said nothing — so it is the only
+      # safe way to carry one policy's settings onto another without dragging defaults along, and
+      # without mistaking a deliberate choice that happens to equal a default for silence.
+      #
+      # An empty `retry_codes` list counts as unset. It retries nothing, which is exactly what an
+      # unset list does, so there is nothing for it to carry.
+      #
+      # @return [Hash{Symbol=>Object}] Explicitly set settings only
+      def overrides
+        # Assigns nil, and so omits the key, when the list is absent or empty.
+        retry_codes = @retry_codes unless @retry_codes.nil? || @retry_codes.empty?
+        {
+          initial_delay:   @initial_delay,
+          max_delay:       @max_delay,
+          multiplier:      @multiplier,
+          retry_codes:     retry_codes,
+          timeout:         @timeout,
+          jitter:          @jitter,
+          retry_predicate: @retry_predicate
+        }.compact
       end
 
       ##
