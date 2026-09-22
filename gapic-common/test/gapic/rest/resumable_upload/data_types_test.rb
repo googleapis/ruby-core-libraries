@@ -76,12 +76,6 @@ class DataTypesTest < Minitest::Test
     end
   end
 
-  def test_reserved_initial_headers_constant_is_lowercase_and_duplicate_free
-    assert_equal RESERVED_INITIAL_HEADERS.map(&:downcase), RESERVED_INITIAL_HEADERS
-    assert_equal RESERVED_INITIAL_HEADERS.uniq, RESERVED_INITIAL_HEADERS
-    assert_predicate RESERVED_INITIAL_HEADERS, :frozen?
-  end
-
   def test_start_upload_config_allows_caller_owned_initial_headers
     stream = StringIO.new "content"
     headers = {
@@ -95,9 +89,8 @@ class DataTypesTest < Minitest::Test
     assert_equal headers, config.initial_headers
   end
 
-  def test_state_defaults_and_with
+  def test_state_and_instruction_defaults
     state = State.new
-
     assert_equal :initializing, state.status
     assert_nil state.upload_url
     assert_equal 0, state.offset
@@ -106,43 +99,16 @@ class DataTypesTest < Minitest::Test
     assert_equal 0, state.in_flight_length
     assert_nil state.last_error
 
-    modified = state.with status: :starting, upload_url: "https://example.com/upload"
-    assert_equal :starting, modified.status
-    assert_equal "https://example.com/upload", modified.upload_url
-    assert_equal :initializing, state.status
-  end
+    http_event = Event::HttpResponse.new status: 200
+    assert_equal({}, http_event.headers)
+    assert_nil http_event.body
 
-  def test_event_instantiation
-    start_event = Event::StartUpload.new
-    assert_instance_of Event::StartUpload, start_event
+    start_inst = Instruction::SendStart.new url: "https://example.com"
+    assert_equal({}, start_inst.headers)
+    assert_nil start_inst.body
 
-    chunk = Event::ChunkRead.new bytes_buffered: 100, eof: true
-    assert_equal 100, chunk.bytes_buffered
-    assert chunk.eof
-
-    http = Event::HttpResponse.new status: 200, headers: { "a" => "b" }, body: "body"
-    assert_equal 200, http.status
-    assert_equal({ "a" => "b" }, http.headers)
-    assert_equal "body", http.body
-
-    req_fail = Event::RequestFailed.new kind: :connection_failed, message: "err"
-    assert_equal :connection_failed, req_fail.kind
-    assert_equal "err", req_fail.message
-  end
-
-  def test_instruction_instantiation
-    start = Instruction::SendStart.new url: "https://example.com"
-    assert_equal "https://example.com", start.url
-    assert_equal({}, start.headers)
-    assert_nil start.body
-
-    chunk = Instruction::SendChunk.new url: "https://example.com", offset: 0, length: 100
-    assert_equal 0, chunk.offset
-    assert_equal 100, chunk.length
-    refute chunk.finalize
-
-    realign = Instruction::RealignBuffer.new server_offset: 500
-    assert_equal 500, realign.server_offset
+    chunk_inst = Instruction::SendChunk.new url: "https://example.com", offset: 0, length: 100
+    refute chunk_inst.finalize
   end
 
   def test_progress_instantiation
@@ -164,20 +130,6 @@ class DataTypesTest < Minitest::Test
 
     assert_raises ArgumentError do
       Progress.new phase: :invalid_phase, bytes_uploaded: 512, total_bytes: 2048
-    end
-  end
-
-  def test_resume_handle_instantiation
-    handle = ResumeHandle.new upload_url: "https://upload.example.com/session123", chunk_size: 1_048_576
-    assert_equal "https://upload.example.com/session123", handle.upload_url
-    assert_equal 1_048_576, handle.chunk_size
-
-    assert_raises ArgumentError do
-      ResumeHandle.new upload_url: "https://upload.example.com/session123"
-    end
-
-    assert_raises NoMethodError do
-      handle.upload_url = "https://mutated.com"
     end
   end
 

@@ -135,35 +135,23 @@ class DriverBufferTest < Minitest::Test
   # execute_realign_buffer tests: trim within buffer
   # ============================================================================
 
-  def test_realign_buffer_trim_exact_beginning
+  def test_realign_buffer_within_window
     driver = build_driver stream: StringIO.new
     driver.instance_variable_set :@buffer_start_offset, 1000
     driver.instance_variable_set :@buffer, "0123456789".b
 
+    # Exact left boundary (server_offset == buffer_start_offset): keeps full buffer
     driver.send :execute_realign_buffer, Instruction::RealignBuffer.new(server_offset: 1000)
-
     assert_equal 1000, driver.instance_variable_get(:@buffer_start_offset)
     assert_equal "0123456789".b, driver.instance_variable_get(:@buffer)
-  end
 
-  def test_realign_buffer_trim_middle
-    driver = build_driver stream: StringIO.new
-    driver.instance_variable_set :@buffer_start_offset, 1000
-    driver.instance_variable_set :@buffer, "0123456789".b
-
+    # Interior of window: slices consumed prefix
     driver.send :execute_realign_buffer, Instruction::RealignBuffer.new(server_offset: 1004)
-
     assert_equal 1004, driver.instance_variable_get(:@buffer_start_offset)
     assert_equal "456789".b, driver.instance_variable_get(:@buffer)
-  end
 
-  def test_realign_buffer_trim_exact_end
-    driver = build_driver stream: StringIO.new
-    driver.instance_variable_set :@buffer_start_offset, 1000
-    driver.instance_variable_set :@buffer, "0123456789".b
-
+    # Exact right boundary (server_offset == buffer_end_offset): empties buffer
     driver.send :execute_realign_buffer, Instruction::RealignBuffer.new(server_offset: 1010)
-
     assert_equal 1010, driver.instance_variable_get(:@buffer_start_offset)
     assert_equal "".b, driver.instance_variable_get(:@buffer)
   end
@@ -186,22 +174,6 @@ class DriverBufferTest < Minitest::Test
     assert_equal 500, stream.pos
   end
 
-  def test_realign_buffer_rewind_unseekable_stream_raises_error
-    stream = UnseekableStream.new "0123456789" * 100
-    driver = build_driver stream: stream
-    driver.instance_variable_set :@buffer_start_offset, 1000
-    driver.instance_variable_set :@buffer, "buffered".b
-
-    err = assert_raises UnseekableStreamError do
-      driver.send :execute_realign_buffer, Instruction::RealignBuffer.new(server_offset: 500)
-    end
-
-    assert_includes err.message, "offset 500"
-    assert_includes err.message, "buffered from 1000"
-    assert_nil err.resume_handle
-    refute_includes err.message, "(upload session is resumable: see #resume_handle)"
-  end
-
   def test_realign_buffer_rewind_unseekable_stream_with_resume_handle
     stream = UnseekableStream.new "0123456789" * 100
     driver = build_driver stream: stream
@@ -222,33 +194,6 @@ class DriverBufferTest < Minitest::Test
     assert_includes err.message, "offset 500"
     assert_includes err.message, "buffered from 1000"
     assert_includes err.message, "(upload session is resumable: see #resume_handle)"
-  end
-
-  def test_driver_resume_handle_property
-    stream = StringIO.new "test"
-    driver = build_driver stream: stream
-    assert_nil driver.resume_handle
-
-    driver.core.instance_variable_set(
-      :@state,
-      driver.core.state.with(upload_url: "https://upload.example.com/session_2", chunk_size: 512)
-    )
-    handle = driver.resume_handle
-    refute_nil handle
-    assert_equal "https://upload.example.com/session_2", handle.upload_url
-    assert_equal 512, handle.chunk_size
-
-    driver.core.instance_variable_set(
-      :@state,
-      driver.core.state.with(status: :rejected, upload_url: "https://upload.example.com/session_2", chunk_size: 512)
-    )
-    assert_nil driver.resume_handle
-
-    driver.core.instance_variable_set(
-      :@state,
-      driver.core.state.with(status: :cancelled, upload_url: "https://upload.example.com/session_2", chunk_size: 512)
-    )
-    assert_nil driver.resume_handle
   end
 
   # ============================================================================

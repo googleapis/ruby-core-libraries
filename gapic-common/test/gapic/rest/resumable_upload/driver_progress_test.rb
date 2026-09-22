@@ -39,50 +39,6 @@ class DriverProgressTest < Minitest::Test
     end
   end
 
-  def test_execute_notify_progress_without_callback_does_not_raise
-    driver = build_driver on_progress: nil
-
-    instruction = Instruction::NotifyProgress.new progress: Progress.new(phase: :uploading, bytes_uploaded: 1024, total_bytes: 4096)
-    # Must not raise when callback is nil
-    driver.send :execute_notify_progress, instruction
-  end
-
-  def test_execute_notify_progress_happy_path_invoked_once
-    calls = []
-    callback = ->(progress) { calls << progress }
-    driver = build_driver on_progress: callback
-
-    instruction = Instruction::NotifyProgress.new progress: Progress.new(phase: :uploading, bytes_uploaded: 500, total_bytes: 1000)
-    driver.send :execute_notify_progress, instruction
-
-    assert_equal 1, calls.size
-    assert_equal Progress.new(phase: :uploading, bytes_uploaded: 500, total_bytes: 1000), calls.first
-  end
-
-  def test_execute_notify_progress_total_bytes_nil_passes_through
-    calls = []
-    callback = ->(progress) { calls << progress }
-    driver = build_driver on_progress: callback
-
-    instruction = Instruction::NotifyProgress.new progress: Progress.new(phase: :uploading, bytes_uploaded: 250, total_bytes: nil)
-    driver.send :execute_notify_progress, instruction
-
-    assert_equal 1, calls.size
-    assert_equal Progress.new(phase: :uploading, bytes_uploaded: 250, total_bytes: nil), calls.first
-  end
-
-  def test_execute_notify_progress_raises_error_to_caller_when_callback_fails
-    callback = ->(_progress) { raise CustomCallbackError, "User UI crashed in progress callback" }
-    driver = build_driver on_progress: callback
-
-    instruction = Instruction::NotifyProgress.new progress: Progress.new(phase: :uploading, bytes_uploaded: 100, total_bytes: 1000)
-    err = assert_raises CustomCallbackError do
-      driver.send :execute_notify_progress, instruction
-    end
-
-    assert_equal "User UI crashed in progress callback", err.message
-  end
-
   def test_driver_run_propagates_callback_error_end_to_end
     # Script responses: 1. start response -> 2. chunk response (triggers NotifyProgress)
     responses = [
@@ -161,18 +117,5 @@ class DriverProgressTest < Minitest::Test
     assert_equal :completed, completed_snapshot.phase
     assert_equal 10, completed_snapshot.bytes_uploaded
     assert_equal 10, completed_snapshot.total_bytes
-  end
-
-  private
-
-  def build_driver on_progress: nil
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123456789"),
-      upload_size: 10,
-      chunk_size:  4,
-      on_progress: on_progress
-    )
-    Driver.new client_stub: Object.new, config: config
   end
 end

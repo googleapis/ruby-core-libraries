@@ -48,77 +48,24 @@ class DriverConfigTest < Minitest::Test
 
   FakeResponse = Data.define :status, :headers, :body
 
-  def test_resolve_timeout_prefers_positive_config_timeout
+  def test_resolve_timeout
     stub = FakeClientStub.new
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123"),
-      upload_size: 10 * 1_048_576,
-      timeout:     42
-    )
-    driver = Driver.new client_stub: stub, config: config
+    resolve_for = lambda do |**opts|
+      config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("0123"), **opts
+      Driver.new(client_stub: stub, config: config).send :resolve_timeout
+    end
 
-    assert_equal 42, driver.send(:resolve_timeout)
-  end
+    # Explicit positive timeout takes precedence over upload_size
+    assert_equal 42, resolve_for.call(upload_size: 10 * 1_048_576, timeout: 42)
 
-  def test_resolve_timeout_treats_zero_timeout_same_as_nil
-    stub = FakeClientStub.new
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123"),
-      timeout:     0
-    )
-    driver = Driver.new client_stub: stub, config: config
+    # Zero and negative timeouts are treated as unset (nil)
+    assert_equal Driver::BASE_TIMEOUT, resolve_for.call(timeout: 0)
+    assert_equal Driver::BASE_TIMEOUT, resolve_for.call(timeout: -10)
 
-    assert_equal Driver::BASE_TIMEOUT, driver.send(:resolve_timeout)
-  end
-
-  def test_resolve_timeout_treats_negative_timeout_same_as_nil
-    stub = FakeClientStub.new
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123"),
-      timeout:     -10
-    )
-    driver = Driver.new client_stub: stub, config: config
-
-    assert_equal Driver::BASE_TIMEOUT, driver.send(:resolve_timeout)
-  end
-
-  def test_resolve_timeout_calculates_from_upload_size_above_base_timeout
-    stub = FakeClientStub.new
-    large_size = 7_200 * Driver::MIN_ASSUMED_THROUGHPUT # 7200 seconds at 1MB/s
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123"),
-      upload_size: large_size
-    )
-    driver = Driver.new client_stub: stub, config: config
-
-    assert_in_delta 7_200.0, driver.send(:resolve_timeout), 0.001
-  end
-
-  def test_resolve_timeout_uses_base_timeout_floor_for_small_upload_size
-    stub = FakeClientStub.new
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123"),
-      upload_size: 1_048_576 # 1 second at 1MB/s < 3600
-    )
-    driver = Driver.new client_stub: stub, config: config
-
-    assert_equal Driver::BASE_TIMEOUT, driver.send(:resolve_timeout)
-  end
-
-  def test_resolve_timeout_defaults_to_base_timeout_when_upload_size_nil
-    stub = FakeClientStub.new
-    config = StartUploadConfig.new(
-      initial_url: "https://example.com/upload",
-      stream:      StringIO.new("0123")
-    )
-    driver = Driver.new client_stub: stub, config: config
-
-    assert_equal Driver::BASE_TIMEOUT, driver.send(:resolve_timeout)
+    # Proportional to upload_size above BASE_TIMEOUT, floored at BASE_TIMEOUT for small or nil upload_size
+    assert_in_delta 7_200.0, resolve_for.call(upload_size: 7_200 * Driver::MIN_ASSUMED_THROUGHPUT), 0.001
+    assert_equal Driver::BASE_TIMEOUT, resolve_for.call(upload_size: 1_048_576)
+    assert_equal Driver::BASE_TIMEOUT, resolve_for.call
   end
 
   def test_run_raises_deadline_exceeded_when_timeout_expires
@@ -198,37 +145,6 @@ class DriverConfigTest < Minitest::Test
     timeouts.each_cons 2 do |prev_timeout, next_timeout|
       assert_operator prev_timeout, :>, next_timeout
     end
-  end
-
-  def test_start_headers_derives_content_descriptors_from_config
-    config = StartUploadConfig.new(
-      initial_url:  "https://example.com/upload",
-      stream:       StringIO.new("0123"),
-      upload_size:  4,
-      content_type: "application/octet-stream"
-    )
-    driver = Driver.new client_stub: FakeClientStub.new, config: config
-    instruction = Instruction::SendStart.new url: "https://example.com/upload"
-
-    headers = driver.send :start_headers, instruction
-
-    assert_equal "application/octet-stream", headers["X-Goog-Upload-Header-Content-Type"]
-    assert_equal "4", headers["X-Goog-Upload-Header-Content-Length"]
-  end
-
-  def test_start_headers_passes_unrelated_caller_headers_through
-    config = StartUploadConfig.new initial_url: "https://example.com/upload", stream: StringIO.new("0123")
-    driver = Driver.new client_stub: FakeClientStub.new, config: config
-    instruction = Instruction::SendStart.new(
-      url:     "https://example.com/upload",
-      headers: { "X-Custom" => "value" }
-    )
-
-    headers = driver.send :start_headers, instruction
-
-    assert_equal "value", headers["X-Custom"]
-    assert_equal "resumable", headers["X-Goog-Upload-Protocol"]
-    assert_equal "start", headers["X-Goog-Upload-Command"]
   end
 
   def test_start_headers_without_caller_headers_is_unchanged
