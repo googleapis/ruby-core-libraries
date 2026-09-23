@@ -23,8 +23,14 @@ module Gapic
       ##
       # @private
       # HTTP status code to reason phrase mapping.
+      #
+      # Includes `200` because a well-formed success can still be a protocol failure: an
+      # `X-Goog-Upload-Status` that does not match the phase of the request in flight is reported as a
+      # {BadResponseError} carrying the 200 it arrived with.
+      #
       # @return [Hash<Integer, String>]
       HTTP_STATUS_PHRASES = {
+        200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
@@ -156,12 +162,12 @@ module Gapic
       #   end
       #
       # Included by {RequestFailedError}, {DeadlineExceededError}, {BadResponseError},
-      # {UnseekableStreamError}, {StreamMismatchError} and {InvalidTransitionError}.
+      # {UnseekableStreamError} and {StreamMismatchError}.
       #
-      # Deliberately **not** included by {UploadRejectedError} or {SessionStateError}: the first means the
-      # server refused the upload outright and the second is a caller misuse, so neither is retryable. Note
-      # also that `resume_handle` may still be `nil` on an including error, for instance when the failure
-      # happened before initiation established an upload URL.
+      # Deliberately **not** included by {UploadRejectedError}, {UploadCancelledError} or {SessionStateError}:
+      # the first two mean the session is permanently terminated on the server and the third is a caller misuse,
+      # so none of them is retryable. Note also that `resume_handle` may still be `nil` on an including error,
+      # for instance when the failure happened before initiation established an upload URL.
       #
       # @!attribute [r] resume_handle
       #   @return [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Associated upload session resume handle
@@ -191,6 +197,16 @@ module Gapic
       end
 
       ##
+      # @private
+      # Raised when an internal state machine or driver invariant is violated.
+      # Produced by {Rules} when an unlisted shape or recipe is encountered, and by
+      # {Driver} when a recipe emits a malformed instruction batch.
+      #
+      class InternalError < Gapic::Common::Error
+      end
+
+      ##
+      # @private
       # Raised when an invalid or unmatched event is dispatched for the current protocol state.
       #
       # @!attribute [r] response
@@ -199,12 +215,8 @@ module Gapic
       #   @return [Symbol, nil] Current protocol state
       # @!attribute [r] event
       #   @return [Object, nil] Received event
-      # @!attribute [r] resume_handle
-      #   @return [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Associated resume handle
       #
-      class InvalidTransitionError < Gapic::Common::Error
-        include HasResumeHandle
-
+      class InvalidTransitionError < InternalError
         # @return [Gapic::Rest::ResumableUpload::Event::HttpResponse, Object, nil]
         attr_reader :response
 
@@ -221,13 +233,11 @@ module Gapic
         # @param state [Symbol, nil] Current protocol state
         # @param event [Object, nil] Received event
         # @param response [Gapic::Rest::ResumableUpload::Event::HttpResponse, Object, nil] Associated HTTP response
-        # @param resume_handle [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Associated resume handle
-        def initialize message, state: nil, event: nil, response: nil, resume_handle: nil
+        def initialize message, state: nil, event: nil, response: nil
           @state = state
           @event = event
           @response = response || (event if defined?(Event::HttpResponse) && event.is_a?(Event::HttpResponse))
-          @resume_handle = resume_handle
-          super HasResumeHandle.append_suffix(message, resume_handle)
+          super message
         end
 
         ##
@@ -237,15 +247,13 @@ module Gapic
         # @param state [Symbol, nil] Current protocol state
         # @param message [String, nil] Descriptive error message
         # @param response [Object, nil] Associated HTTP response
-        # @param resume_handle [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Associated resume handle
         # @return [InvalidTransitionError]
-        def self.from event, state: nil, message: nil, response: nil, resume_handle: nil
+        def self.from event, state: nil, message: nil, response: nil
           new(
             message || "Invalid transition for event #{event.inspect}",
-            state:         state,
-            event:         event,
-            response:      response,
-            resume_handle: resume_handle
+            state:    state,
+            event:    event,
+            response: response
           )
         end
       end
@@ -349,10 +357,12 @@ module Gapic
         # @param event [Object] HTTP response event
         # @param response_body [String, nil] Optional response body override
         # @param resume_handle [Gapic::Rest::ResumableUpload::ResumeHandle, nil] Optional resume handle
+        # @param prefix [String] Leading clause of the error message, used to name the protocol phase the
+        #   response arrived in
         # @return [BadResponseError]
-        def self.from event, response_body: nil, resume_handle: nil
+        def self.from event, response_body: nil, resume_handle: nil, prefix: "Resumable upload failed"
           body = response_body || (event.respond_to?(:body) ? event.body : nil)
-          message, status_code, status, details, headers = ErrorBuilder.build_attributes event
+          message, status_code, status, details, headers = ErrorBuilder.build_attributes event, prefix: prefix
           new message, status_code, status: status, details: details, headers: headers,
               response_body: body, resume_handle: resume_handle
         end
@@ -398,9 +408,15 @@ module Gapic
       end
 
       ##
-      # @private
-      # Raised when the upload session is cancelled.
-      # Cancellation is not public yet.
+      # Raised when the upload session was cancelled and will accept no further data.
+      #
+      # Reachable today only for a cancellation this client did not request: the server reports an
+      # established session as cancelled while a chunk, a finalize, or a recovery query is in flight,
+      # because another process, another client, or a server-side policy ended it. Client-initiated
+      # cancellation is not part of the public API yet, and this error is also what that will raise.
+      #
+      # Deliberately does not include {HasResumeHandle}. A cancelled session is gone server-side, so there
+      # is nothing to resume and retrying against it cannot succeed; a new upload must be started instead.
       #
       class UploadCancelledError < Gapic::Common::Error
         ##

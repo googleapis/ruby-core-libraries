@@ -390,8 +390,10 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
 | **`Cancelling`** | `:response_cancelled` | `Event::HttpResponse(200, headers, _)` with `Status: cancelled` | `status = :cancelled` | `Cancelled` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadCancelledError.from(event))` |
 | **`Cancelling`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, _)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Cancelling`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` / `:response_fatal_bad_response` | `Event::RequestFailed` or HTTP failure | `last_error = error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
+| **`Transmission \| Sending chunk` / `Finalizing \| Sending with upload` / `Finalizing \| Sending finalize` / `Recovery`** | `:response_cancelled` | `Event::HttpResponse(200, headers, _)` with `Status: cancelled`, on a session this client never asked to cancel | `in_flight_length = 0`<br/>`last_error = Gapic::Rest::ResumableUpload::UploadCancelledError.new("Resumable upload session was cancelled (detected while ...)")`<br/>`status = :cancelled` | `Cancelled` | `Instruction::TerminateFailure.new(error: state.last_error)` |
+| **`Starting` / `Transmission \| Sending chunk` / `Finalizing \| Sending with upload` / `Finalizing \| Sending finalize` / `Recovery` / `Cancelling`** | any HTTP response shape not claimed above | `Event::HttpResponse` whose `X-Goog-Upload-Status` does not match the phase of the request in flight (e.g. `final` during transmission, `active` while finalizing, `cancelled` during initiation) | `in_flight_length = 0`<br/>`last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event, resume_handle:, prefix: "Resumable upload failed while <phase>")`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
 | **Any Non-Terminal** | `:global_deadline_exceeded` | `Event::GlobalDeadlineExceeded` | `last_error = Gapic::Rest::ResumableUpload::DeadlineExceededError.new`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
-| **Any State** | *Unmatched* | Any event not matched above | — | — | `fail_with_unmatched_transition(state, event)`: raises `InvalidTransitionError` stating in human terms what the protocol was doing (e.g. sending a chunk of data), what happened including HTTP status and `X-Goog-Upload-Status` header, and attaches the response. |
+| **Any State** | *Unmatched* | Any event not matched above. Reachable only on a `Driver`/`Core` sequencing bug: every externally caused failure, including out-of-phase HTTP responses, is claimed by a row above. | — | — | `fail_with_unmatched_transition(state, event)`: raises the `@private` `InvalidTransitionError` stating in human terms what the protocol was doing (e.g. sending a chunk of data), what happened including HTTP status and `X-Goog-Upload-Status` header, and attaches the response. Carries no resume handle. |
 
 ### 4.3 State Transition Graph
 
@@ -430,10 +432,22 @@ stateDiagram-v2
 
     Starting --> Error : Event::RequestFailed / 4xx / 5xx
     Recovery --> Error : Event::RequestFailed
-    
+
+    Transmission_Sending --> Cancelling : Event::Cancel
+    Finalizing_Sending_Upload --> Cancelling : Event::Cancel
+    Finalizing_Sending_Finalize --> Cancelling : Event::Cancel
+    Recovery --> Cancelling : Event::Cancel
+    Cancelling --> Cancelled : Event::HttpResponse(200, cancelled)
+
+    Transmission_Sending --> Cancelled : Event::HttpResponse(200, cancelled)
+    Finalizing_Sending_Upload --> Cancelled : Event::HttpResponse(200, cancelled)
+    Finalizing_Sending_Finalize --> Cancelled : Event::HttpResponse(200, cancelled)
+    Recovery --> Cancelled : Event::HttpResponse(200, cancelled)
+
     Success --> [*]
     Rejected --> [*]
     Error --> [*]
+    Cancelled --> [*]
 ```
 
 ---
@@ -532,10 +546,11 @@ Terminal errors provide actionable context so downstream SDK callers can inspect
 *   **Error Classes**:
     *   `BadResponseError < Gapic::Rest::Error`: Unrecoverable non-2xx HTTP responses or invalid payloads. Retains `attr_reader :response_body` returning `event.body`, and includes `HasResumeHandle`.
     *   `UploadRejectedError < Gapic::Rest::Error`: Backend explicitly rejected the session with `X-Goog-Upload-Status: final`. Retains `attr_reader :response_body` returning `event.body`. Does NOT include `HasResumeHandle` (session is terminated permanently).
-    *   `UploadCancelledError < Gapic::Common::Error`: Upload session cancelled by caller. Does NOT include `HasResumeHandle` (session is terminated permanently).
+    *   `UploadCancelledError < Gapic::Common::Error`: Upload session was cancelled — either by the caller (via the coordinator's cancellation path) or out-of-band by the server/another client, detected when a response carries `X-Goog-Upload-Status: cancelled` while the session is still transmitting, finalizing, or recovering. Does NOT include `HasResumeHandle` (session is terminated permanently). Part of the public error surface.
     *   `DeadlineExceededError < Gapic::Common::Error`: Upload deadline exceeded with optional root cause (`attr_reader :root_cause`), and includes `HasResumeHandle`.
     *   `UnseekableStreamError < Gapic::Common::Error`: Stream rewind required on an unseekable stream; includes `HasResumeHandle`.
-    *   `InvalidTransitionError < Gapic::Common::Error`: Unexpected event dispatched for state; includes `HasResumeHandle`.
+    *   `InternalError < Gapic::Common::Error`: A defect in the upload implementation rather than a condition the caller can act on. Does NOT include `HasResumeHandle`.
+    *   `InvalidTransitionError < InternalError`: Unexpected event dispatched for state. Marked `@private` — it is an implementation detail and is not part of the documented public surface; callers rescue `InternalError` (or `Gapic::Common::Error`). Does NOT include `HasResumeHandle`: an unmatched transition means the state machine's view of the session is untrustworthy, so advertising the session as resumable would be wrong.
     *   `StreamMismatchError < Gapic::Common::Error`: Stream content or length does not match resumed upload specifications; includes `HasResumeHandle`.
     *   `RequestFailedError < Gapic::Common::Error`: Terminal HTTP request failure (e.g. transport connection failure, request timeout, or retries exhausted). Retains `attr_reader :cause` returning the underlying error, preserves REST error attributes (`status_code`, `status`, `details`, `headers`) when available, and includes `HasResumeHandle`.
     *   `SessionStateError < Gapic::Common::Error`: Raised when an operation violates the upload session lifecycle rules, e.g. starting a second run on a coordinator while one is still in flight. Distinguished from `ArgumentError`, which is raised strictly for invalid argument shapes.
@@ -630,6 +645,7 @@ The `Driver` emits structured logs across three severity levels (`INFO`, `DEBUG`
 | `DEBUG` | Wire | Transport exception (`wire_failure`) | `Request failed: <kind>` |
 | `DEBUG` | Buffer | Stream/buffer realignment (`buffer_realign`) | `Buffer realignment: <action>` |
 | `WARN` | Lifecycle | `:fail_with_deadline_exceeded`, `:fail_with_rejected`, `:fail_with_bad_response`, `:fail_with_request_error` | Resumable upload failed |
+| `WARN` | Lifecycle | `:fail_with_cancelled` | Resumable upload canceled on the server |
 | `WARN` | Transition | `InvalidTransitionError` (`unmatched_transition`) | Unmatched transition |
 | `WARN` | Buffer | Backward server offset rewind on unseekable stream | Server offset rewind on unseekable stream |
 

@@ -315,6 +315,185 @@ class RulesDecideTest < Minitest::Test
     assert_instance_of Instruction::TerminateFailure, decision.instructions.first
   end
 
+  def test_row_transmission_sending_response_cancelled
+    cancelled_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+    state = State.new status: :transmission_sending, upload_url: "https://example.com/session"
+    decision = Rules.decide state, cancelled_resp, @config
+    assert_equal :transmission_sending, decision.from_status
+    assert_equal :response_cancelled, decision.shape
+    assert_equal :fail_with_cancelled, decision.recipe
+    assert_equal :cancelled, decision.next_state.status
+    assert_recipe_progress_notification decision
+    assert_instance_of UploadCancelledError, decision.next_state.last_error
+    assert_instance_of Instruction::TerminateFailure, decision.instructions.first
+  end
+
+  def test_row_recovery_response_cancelled
+    cancelled_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+    state = State.new status: :recovery, upload_url: "https://example.com/session"
+    decision = Rules.decide state, cancelled_resp, @config
+    assert_equal :fail_with_cancelled, decision.recipe
+    assert_equal :cancelled, decision.next_state.status
+    assert_instance_of UploadCancelledError, decision.next_state.last_error
+  end
+
+  def test_row_out_of_phase_responses_fail_as_bad_response
+    final_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "final" }
+    active_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "active" }
+    cancelled_resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+
+    # Server finalizes a chunk that was not the last one.
+    decision = Rules.decide State.new(status: :transmission_sending), final_resp, @config
+    assert_equal :fail_with_bad_response, decision.recipe
+    assert_equal :error, decision.next_state.status
+    assert_instance_of BadResponseError, decision.next_state.last_error
+
+    # Server refuses to finalize, answering a finalize command with `active`.
+    decision = Rules.decide State.new(status: :finalizing_sending_finalize), active_resp, @config
+    assert_equal :fail_with_bad_response, decision.recipe
+    assert_equal :error, decision.next_state.status
+
+    # Server answers session initiation with `cancelled`, before any session exists to cancel.
+    decision = Rules.decide State.new(status: :starting), cancelled_resp, @config
+    assert_equal :fail_with_bad_response, decision.recipe
+    assert_equal :error, decision.next_state.status
+  end
+
+  ##
+  # Pins every cell of the {Rules::STATUSES} x {Rules::SHAPES} product.
+  #
+  # `Rules.route` is pure, so this enumerates the entire table without building a State or running a
+  # recipe. Only cells that route somewhere other than `:fail_with_unmatched_transition` are listed below;
+  # everything else is asserted to fall through to it. Any routing change — a widened arm, a reordered
+  # arm, a new recipe — shows up here as a named cell rather than as a surprise in production.
+  #
+  def test_routing_table_is_pinned_for_every_status_and_shape
+    routed = {
+      initializing:                {
+        start_upload:  :start_session,
+        resume_upload: :resume_session
+      },
+      starting:                    {
+        response_active:             :begin_transmission,
+        response_final:              :fail_with_bad_response,
+        response_cancelled:          :fail_with_bad_response,
+        response_cat2:               :fail_with_bad_response,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_connection_failed:   :fail_with_request_error,
+        request_timeout:             :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error
+      },
+      transmission_reading:        {
+        chunk_read_full:          :send_chunk,
+        chunk_read_eof_with_data: :send_upload_finalize,
+        chunk_read_eof_empty:     :send_finalize,
+        user_cancel:              :cancel_session
+      },
+      transmission_sending:        {
+        response_active:             :ack_chunk,
+        response_final:              :fail_with_bad_response,
+        response_cancelled:          :fail_with_cancelled,
+        response_cat2:               :enter_recovery,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_connection_failed:   :enter_recovery,
+        request_timeout:             :enter_recovery,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error,
+        user_cancel:                 :cancel_session
+      },
+      finalizing_sending_upload:   {
+        response_active:             :fail_with_bad_response,
+        response_final:              :complete_upload_with_data,
+        response_cancelled:          :fail_with_cancelled,
+        response_cat2:               :enter_recovery,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_connection_failed:   :enter_recovery,
+        request_timeout:             :enter_recovery,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error,
+        user_cancel:                 :cancel_session
+      },
+      finalizing_sending_finalize: {
+        response_active:             :fail_with_bad_response,
+        response_final:              :complete_upload_finalized,
+        response_cancelled:          :fail_with_cancelled,
+        response_cat2:               :enter_recovery,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_connection_failed:   :enter_recovery,
+        request_timeout:             :enter_recovery,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error,
+        user_cancel:                 :cancel_session
+      },
+      recovery:                    {
+        response_active:             :realign_from_recovery,
+        response_final:              :complete_upload_finalized,
+        response_cancelled:          :fail_with_cancelled,
+        response_cat2:               :retry_recovery,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_connection_failed:   :fail_with_request_error,
+        request_timeout:             :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error,
+        user_cancel:                 :cancel_session
+      },
+      cancelling:                  {
+        response_active:             :fail_with_bad_response,
+        response_final:              :fail_with_bad_response,
+        response_cancelled:          :complete_cancellation,
+        response_cat2:               :fail_with_bad_response,
+        response_fatal_bad_response: :fail_with_bad_response,
+        response_rejected:           :fail_with_rejected,
+        request_retries_exhausted:   :fail_with_request_error,
+        request_connection_failed:   :fail_with_request_error,
+        request_timeout:             :fail_with_request_error,
+        request_failed_unknown:      :fail_with_request_error
+      },
+      # The four terminal statuses route nothing but the global-deadline wildcard, and the Driver stops
+      # the loop before it could dispatch into them anyway.
+      success:                     {},
+      cancelled:                   {},
+      rejected:                    {},
+      error:                       {}
+    }
+
+    # `[_, :global_deadline_exceeded]` is the table's one wildcard arm: it applies in every status.
+    expected = routed.transform_values do |row|
+      { global_deadline_exceeded: :fail_with_deadline_exceeded }.merge row
+    end
+
+    assert_equal Rules::STATUSES.sort, expected.keys.sort,
+                 "Routing table must name every status in Rules::STATUSES and no others"
+    expected.each do |status, row|
+      assert_empty row.keys - Rules::SHAPES,
+                   "Routing table names shapes absent from Rules::SHAPES under #{status.inspect}"
+    end
+
+    mismatches = []
+    Rules::STATUSES.each do |status|
+      Rules::SHAPES.each do |shape|
+        want = expected[status][shape] || :fail_with_unmatched_transition
+        got = Rules.route status, shape
+        next if want == got
+
+        mismatches << "  [#{status.inspect}, #{shape.inspect}] expected #{want.inspect}, got #{got.inspect}"
+      end
+    end
+    cells = Rules::STATUSES.size * Rules::SHAPES.size
+    assert_empty mismatches,
+                 "Routing changed in #{mismatches.size} of #{cells} cells:\n#{mismatches.join "\n"}"
+
+    reachable = expected.values.flat_map(&:values).uniq
+    assert_empty Rules::RECIPES - reachable - [:fail_with_unmatched_transition],
+                 "Recipes that no routing arm can select"
+  end
+
   private
 
   def assert_recipe_progress_notification decision

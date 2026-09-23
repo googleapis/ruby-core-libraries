@@ -210,8 +210,6 @@ module Gapic
     #   recovery on an unseekable stream
     # @raise [Gapic::Rest::ResumableUpload::StreamMismatchError] If stream content or length does not match
     #   protocol expectations
-    # @raise [Gapic::Rest::ResumableUpload::InvalidTransitionError] If an unmatched event occurs for the
-    #   current protocol state
     # @raise [Gapic::Rest::ResumableUpload::UploadRejectedError] If the server explicitly rejects the upload
     # @raise [Gapic::Rest::ResumableUpload::InternalError] If the library detects an internal invariant
     #   breach; this signals a bug in this library rather than a caller or server error
@@ -278,8 +276,6 @@ module Gapic
     #   recovery on an unseekable stream
     # @raise [Gapic::Rest::ResumableUpload::StreamMismatchError] If stream content or length does not match
     #   the resumed upload
-    # @raise [Gapic::Rest::ResumableUpload::InvalidTransitionError] If an unmatched event occurs for the
-    #   current protocol state
     # @raise [Gapic::Rest::ResumableUpload::UploadRejectedError] If the server explicitly rejects the upload
     # @raise [Gapic::Rest::ResumableUpload::InternalError] If the library detects an internal invariant
     #   breach; this signals a bug in this library rather than a caller or server error

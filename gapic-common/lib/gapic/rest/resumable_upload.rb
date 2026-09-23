@@ -54,11 +54,12 @@ module Gapic
     # ### Error Types
     # * {RequestFailedError} - Transport connection failure, timeout, or retries exhausted (includes {HasResumeHandle}).
     # * {DeadlineExceededError} - Whole-upload timeout exceeded (includes {HasResumeHandle}).
-    # * {BadResponseError} - Unexpected or malformed HTTP response (includes {HasResumeHandle}).
+    # * {BadResponseError} - Unexpected, malformed, or out-of-phase HTTP response (includes {HasResumeHandle}).
     # * {UnseekableStreamError} - Stream rewinding required on an unseekable stream (includes {HasResumeHandle}).
     # * {StreamMismatchError} - Stream content or length does not match resumed upload (includes {HasResumeHandle}).
-    # * {InvalidTransitionError} - Unmatched event for the current protocol state (includes {HasResumeHandle}).
     # * {UploadRejectedError} - Server explicitly rejected the upload session (final).
+    # * {UploadCancelledError} - Upload session was cancelled, either by this client or on the server while the
+    #   upload was in flight. A cancelled session cannot be resumed, so this error carries no {ResumeHandle} (final).
     # * {SessionStateError} - Upload session lifecycle rule violation, e.g. starting a second run while one
     #   is in flight (final).
     #

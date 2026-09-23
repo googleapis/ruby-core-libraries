@@ -83,6 +83,7 @@ module Gapic
       #     transmission_sending --> rejected : response_rejected
       #     recovery --> rejected : response_rejected
       #     cancelling --> cancelled : response_cancelled
+      #     transmission_sending --> cancelled : response_cancelled
       #     success --> [*]
       #     rejected --> [*]
       #     cancelled --> [*]
@@ -91,19 +92,28 @@ module Gapic
       #
       # The graph shows the protocol's intended path and its recoverable detours. Failure edges are largely omitted
       # to keep it readable: every non-terminal status can also reach `error` (on `:global_deadline_exceeded`, on an
-      # unretriable request failure, on a fatally bad response, or on any unmatched event) and `rejected` (on
+      # unretriable request failure, on a bad or out-of-phase response, or on any unmatched event) and `rejected` (on
       # `:response_rejected`), and every status listed in the `:user_cancel` arm can reach `cancelling`. `cancelling`
-      # in particular has only its success edge drawn; it fails like any other in-flight state. {Rules.decide} is the
-      # authoritative enumeration.
+      # in particular has only its success edge drawn; it fails like any other in-flight state. The
+      # `transmission_sending --> cancelled` edge stands in for all four statuses that reach `cancelled` on a
+      # server-reported out-of-band cancellation. {Rules.route} is the authoritative enumeration.
       #
-      # ### Router ordering
+      # ### Routing table
       #
-      # Arms are evaluated top to bottom, so their order encodes precedence and is load-bearing:
+      # {Rules.route} is the table: a pure function from `[status, shape]` to a recipe symbol, naming the handler
+      # without running it. {Rules.decide} runs whatever it names. Keeping selection separate from execution is what
+      # lets the tests enumerate the entire {STATUSES} x {SHAPES} product and assert every cell.
+      #
+      # Arms are written so that no arm matches a pair another arm also matches, which makes their order
+      # presentational. There is one deliberate exception:
       #
       # * `enter_recovery` and `fail_with_request_error` both match
       #   `[:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,`
       #   `:request_connection_failed | :request_timeout]`. Recovery wins purely because its arm precedes
       #   `fail_with_request_error`.
+      #
+      # Two properties of the table are easy to misread and are called out at their arms:
+      #
       # * `[:starting, :response_cat2]` fails instead of recovering, unlike the same shape during transmission
       #   and finalizing. There is no upload to recover to until initiation yields an upload URL.
       # * `recovery` re-queries on `:response_cat2` with no attempt cap. Termination is guaranteed only by the
@@ -283,6 +293,7 @@ module Gapic
           :complete_upload_finalized,
           :cancel_session,
           :complete_cancellation,
+          :fail_with_cancelled,
           :fail_with_deadline_exceeded,
           :fail_with_rejected,
           :fail_with_bad_response,
@@ -316,6 +327,7 @@ module Gapic
           :send_chunk,
           :retry_recovery,
           :complete_cancellation,
+          :fail_with_cancelled,
           :fail_with_deadline_exceeded,
           :fail_with_rejected,
           :fail_with_bad_response,
@@ -354,76 +366,20 @@ module Gapic
 
         ##
         # @private
-        # Top-level transition decision engine. Matches [state.status, shape].
+        # Top-level transition decision engine. Routes `[state.status, shape_of(event)]` to a recipe and runs it.
         #
         # @param state [State] Current state
         # @param event [Object] Input event
         # @param config [StartUploadConfig, ResumeUploadConfig] Static configuration
         # @return [Decision] Decision snapshot
-        #
-        # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
+        # @raise [InternalError] If {Rules.shape_of} or {Rules.route} produces an unlisted value
         def self.decide state, event, config
           shape = shape_of event
           unless SHAPES.include? shape
             raise InternalError, "Resumable upload internal error: shape_of returned unknown shape #{shape.inspect}"
           end
 
-          recipe = case [state.status, shape]
-                   in [:initializing, :start_upload]
-                     :start_session
-                   in [:initializing, :resume_upload]
-                     :resume_session
-                   in [:starting, :response_active]
-                     :begin_transmission
-                   in [:transmission_reading, :chunk_read_full]
-                     :send_chunk
-                   in [:transmission_reading, :chunk_read_eof_with_data]
-                     :send_upload_finalize
-                   in [:transmission_reading, :chunk_read_eof_empty]
-                     :send_finalize
-                   in [:transmission_sending, :response_active]
-                     :ack_chunk
-                   # Order matters: `enter_recovery` and `fail_with_request_error` below both match
-                   # `[:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
-                   # :request_connection_failed | :request_timeout]`. Recovery wins purely because this arm comes first.
-                   in [:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
-                       :response_cat2 | :request_connection_failed | :request_timeout]
-                     :enter_recovery
-                   in [:finalizing_sending_upload, :response_final]
-                     :complete_upload_with_data
-                   in [:finalizing_sending_finalize | :recovery, :response_final]
-                     :complete_upload_finalized
-                   in [:recovery, :response_active]
-                     :realign_from_recovery
-                   # Re-query with no attempt cap. Only the Driver's global deadline guarantees termination.
-                   in [:recovery, :response_cat2]
-                     :retry_recovery
-                   in [:cancelling, :response_cancelled]
-                     :complete_cancellation
-                   in [_, :global_deadline_exceeded]
-                     :fail_with_deadline_exceeded
-                   in [:transmission_reading | :transmission_sending | :finalizing_sending_upload |
-                       :finalizing_sending_finalize | :recovery, :user_cancel]
-                     :cancel_session
-                   in [:starting | :transmission_sending | :finalizing_sending_upload |
-                       :finalizing_sending_finalize | :recovery | :cancelling, :response_rejected]
-                     :fail_with_rejected
-                   # `:starting` fails on `:response_cat2` rather than entering recovery, unlike the
-                   # transmission and finalizing states above: there is no upload to recover to until
-                   # initiation has returned an upload URL.
-                   in [:starting | :cancelling, :response_cat2] |
-                      [:starting | :transmission_sending | :finalizing_sending_upload |
-                       :finalizing_sending_finalize | :recovery | :cancelling, :response_fatal_bad_response]
-                     :fail_with_bad_response
-                   in [:starting | :transmission_sending | :finalizing_sending_upload |
-                       :finalizing_sending_finalize | :recovery | :cancelling,
-                       :request_retries_exhausted | :request_connection_failed | :request_timeout |
-                       :request_failed_unknown]
-                     :fail_with_request_error
-                   else
-                     :fail_with_unmatched_transition
-                   end
-
+          recipe = route state.status, shape
           unless RECIPES.include? recipe
             raise InternalError, "Resumable upload internal error: decide selected unknown recipe #{recipe.inspect}"
           end
@@ -436,6 +392,99 @@ module Gapic
             next_state:   next_state,
             instructions: instructions
           )
+        end
+
+        ##
+        # @private
+        # The routing table. Maps a `[status, shape]` pair to the recipe that handles it.
+        #
+        # Pure and side-effect free: it selects a recipe without running it, so the whole
+        # {STATUSES} x {SHAPES} product can be enumerated and asserted directly. {Rules.decide} is the only
+        # caller in production code.
+        #
+        # Arms are written so that no arm matches a pair another arm also matches, which makes their order
+        # presentational rather than load-bearing — with a single deliberate exception, flagged in place,
+        # where `enter_recovery` must precede `fail_with_request_error`.
+        #
+        # @param status [Symbol] Current protocol status, one of {STATUSES}
+        # @param shape [Symbol] Canonical event shape, one of {SHAPES}
+        # @return [Symbol] Recipe symbol, one of {RECIPES}
+        #
+        # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
+        def self.route status, shape
+          case [status, shape]
+          in [:initializing, :start_upload]
+            :start_session
+          in [:initializing, :resume_upload]
+            :resume_session
+          in [:starting, :response_active]
+            :begin_transmission
+          in [:transmission_reading, :chunk_read_full]
+            :send_chunk
+          in [:transmission_reading, :chunk_read_eof_with_data]
+            :send_upload_finalize
+          in [:transmission_reading, :chunk_read_eof_empty]
+            :send_finalize
+          in [:transmission_sending, :response_active]
+            :ack_chunk
+          # Order matters: `enter_recovery` and `fail_with_request_error` below both match
+          # `[:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
+          # :request_connection_failed | :request_timeout]`. Recovery wins purely because this arm comes first.
+          # This is the only overlap in the table.
+          in [:transmission_sending | :finalizing_sending_upload | :finalizing_sending_finalize,
+              :response_cat2 | :request_connection_failed | :request_timeout]
+            :enter_recovery
+          in [:finalizing_sending_upload, :response_final]
+            :complete_upload_with_data
+          in [:finalizing_sending_finalize | :recovery, :response_final]
+            :complete_upload_finalized
+          in [:recovery, :response_active]
+            :realign_from_recovery
+          # Re-query with no attempt cap. Only the Driver's global deadline guarantees termination.
+          in [:recovery, :response_cat2]
+            :retry_recovery
+          in [:cancelling, :response_cancelled]
+            :complete_cancellation
+          # A `cancelled` status on a session this client did not ask to cancel: the session was terminated
+          # out of band and no byte of it will ever be accepted again. Terminal, and deliberately not a bad
+          # response — the server answered correctly, so the caller gets no resume handle to loop on.
+          in [:transmission_sending | :finalizing_sending_upload |
+              :finalizing_sending_finalize | :recovery, :response_cancelled]
+            :fail_with_cancelled
+          in [_, :global_deadline_exceeded]
+            :fail_with_deadline_exceeded
+          in [:transmission_reading | :transmission_sending | :finalizing_sending_upload |
+              :finalizing_sending_finalize | :recovery, :user_cancel]
+            :cancel_session
+          in [:starting | :transmission_sending | :finalizing_sending_upload |
+              :finalizing_sending_finalize | :recovery | :cancelling, :response_rejected]
+            :fail_with_rejected
+          # Every HTTP response shape in an HTTP-awaiting status that no arm above claims. Spelled out per
+          # status rather than as a `[six statuses, five shapes]` cross product: the product would also cover
+          # `[:starting, :response_active]`, `[:transmission_sending, :response_active]` and
+          # `[:cancelling, :response_cancelled]`, which are handled above — the last of them a *successful*
+          # cancel acknowledgement.
+          #
+          # Note `[:starting, :response_cat2]`: initiation fails on a Category 2 response rather than
+          # recovering, unlike the transmission and finalizing statuses, because there is no upload to
+          # recover to until initiation has returned an upload URL.
+          in [:starting, :response_final | :response_cancelled |
+                         :response_cat2 | :response_fatal_bad_response] |
+             [:transmission_sending, :response_final | :response_fatal_bad_response] |
+             [:finalizing_sending_upload | :finalizing_sending_finalize,
+              :response_active | :response_fatal_bad_response] |
+             [:recovery, :response_fatal_bad_response] |
+             [:cancelling, :response_active | :response_final |
+                           :response_cat2 | :response_fatal_bad_response]
+            :fail_with_bad_response
+          in [:starting | :transmission_sending | :finalizing_sending_upload |
+              :finalizing_sending_finalize | :recovery | :cancelling,
+              :request_retries_exhausted | :request_connection_failed | :request_timeout |
+              :request_failed_unknown]
+            :fail_with_request_error
+          else
+            :fail_with_unmatched_transition
+          end
         end
         # rubocop:enable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
 
@@ -750,6 +799,27 @@ module Gapic
 
         ##
         # @private
+        # Terminates the run after the server reported a session this client did not cancel as cancelled.
+        #
+        # Distinct from {Rules.complete_cancellation}, which acknowledges a cancellation this client
+        # requested. Both land in `:cancelled` with an {UploadCancelledError}, so the caller sees one error
+        # type for "this session is gone" regardless of who ended it. No resume handle is attached:
+        # {UploadCancelledError} does not include {HasResumeHandle}, because a cancelled session will never
+        # accept another byte and retrying against it cannot succeed.
+        #
+        # @param state [State] Current state
+        # @param _event [Event::HttpResponse] Response carrying `X-Goog-Upload-Status: cancelled`
+        # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
+        # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
+        def self.fail_with_cancelled state, _event, _config
+          action = STATE_DESCRIPTIONS[state.status] || "processing #{state.status}"
+          err = UploadCancelledError.new "Resumable upload session was cancelled (detected while #{action})"
+          next_state = state.with status: :cancelled, in_flight_length: 0, last_error: err
+          [next_state, [Instruction::TerminateFailure.new(error: err)]]
+        end
+
+        ##
+        # @private
         # Initiates session cancellation request.
         #
         # @param state [State] Current state
@@ -821,13 +891,19 @@ module Gapic
         # @private
         # Fails upload when an unrecoverable HTTP response is encountered.
         #
+        # Covers both malformed responses and well-formed ones that arrived in the wrong protocol phase, so
+        # the message names the phase: an `X-Goog-Upload-Status` of `final` is unremarkable on its own and
+        # only makes sense as a failure once the reader knows a non-final chunk was in flight.
+        #
         # @param state [State] Current state
-        # @param event [Event::HttpResponse] Fatal HTTP response
+        # @param event [Event::HttpResponse] Fatal or out-of-phase HTTP response
         # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.fail_with_bad_response state, event, _config
           handle = resume_handle_from state
-          err = BadResponseError.from event, resume_handle: handle
+          action = STATE_DESCRIPTIONS[state.status] || "processing #{state.status}"
+          err = BadResponseError.from event, resume_handle: handle,
+                                      prefix: "Resumable upload failed while #{action}"
           next_state = state.with(
             status:           :error,
             in_flight_length: 0,
@@ -857,7 +933,15 @@ module Gapic
 
         ##
         # @private
-        # Raises InvalidTransitionError for unmatched state and event pair.
+        # Raises {InvalidTransitionError} for an unmatched state and event pair.
+        #
+        # Only reachable on an internal sequencing bug. Every externally caused failure — including an HTTP
+        # response whose upload status does not match the phase of the request in flight — is claimed by an
+        # arm in {Rules.route} and terminates through a recipe instead of raising from here.
+        #
+        # No resume handle is attached, for the same reason: this reports a defect in the library, not a
+        # resumable upload condition. A caller that still wants the handle can read it from
+        # {Gapic::ResumableUpload#resume_handle}.
         #
         # @param state [State] Current state
         # @param event [Object] Dispatched event
@@ -869,13 +953,11 @@ module Gapic
           happened = describe_event event, shape
           message = "Resumable upload failed while #{action}: #{happened}."
           response = event.is_a?(Event::HttpResponse) ? event : nil
-          handle = resume_handle_from state
           raise InvalidTransitionError.new(
             message,
-            state:         state.status,
-            event:         event,
-            response:      response,
-            resume_handle: handle
+            state:    state.status,
+            event:    event,
+            response: response
           )
         end
 

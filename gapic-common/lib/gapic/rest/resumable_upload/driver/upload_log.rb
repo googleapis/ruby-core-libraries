@@ -53,6 +53,7 @@ module Gapic
             complete_upload_finalized:   [:info, "Resumable upload completed"],
             cancel_session:              [:info, "Canceling resumable upload"],
             complete_cancellation:       [:info, "Resumable upload canceled"],
+            fail_with_cancelled:         [:warn, "Resumable upload canceled on the server"],
             fail_with_deadline_exceeded: [:warn, "Resumable upload failed"],
             fail_with_rejected:          [:warn, "Resumable upload failed"],
             fail_with_bad_response:      [:warn, "Resumable upload failed"],

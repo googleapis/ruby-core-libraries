@@ -234,6 +234,7 @@ class RulesTest < Minitest::Test
       complete_upload_finalized:      [base_state.with(status: :finalizing_sending_finalize), final_resp, @config],
       cancel_session:                 [base_state, Event::Cancel.new, @config],
       complete_cancellation:          [base_state.with(status: :cancelling), cancelled_resp, @config],
+      fail_with_cancelled:            [base_state, cancelled_resp, @config],
       fail_with_deadline_exceeded:    [base_state, Event::GlobalDeadlineExceeded.new, @config],
       fail_with_rejected:             [base_state, rejected_resp, @config],
       fail_with_bad_response:         [base_state, bad_resp, @config],

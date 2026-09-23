@@ -130,20 +130,65 @@ class RulesErrorTest < Minitest::Test
     assert_instance_of Instruction::TerminateFailure, instructions.first
   end
 
-  def test_invalid_transition_raises_actionable_error_with_response_details_and_header
-    state = State.new status: :transmission_sending
+  def test_out_of_phase_final_response_during_transmission_fails_as_bad_response
+    state = State.new status: :transmission_sending, upload_url: "https://upload.example.com/session_abc"
     resp = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: '{"done":true}'
 
-    err = assert_raises InvalidTransitionError do
-      Rules.step state, resp, @config
-    end
+    next_state, instructions = Rules.step state, resp, @config
 
-    expected_msg = "Resumable upload failed while sending a chunk of data: " \
-                   "received an unexpected HTTP 200 response (X-Goog-Upload-Status: 'final')."
+    assert_equal :error, next_state.status
+    err = next_state.last_error
+    assert_instance_of BadResponseError, err
+    expected_msg = "Resumable upload failed while sending a chunk of data with HTTP 200 OK " \
+                   "(X-Goog-Upload-Status: 'final')" \
+                   "#{HasResumeHandle::RESUMABLE_SUFFIX}"
     assert_equal expected_msg, err.message
-    assert_equal :transmission_sending, err.state
-    assert_equal resp, err.event
-    assert_equal resp, err.response
+    assert_equal 200, err.status_code
+    assert_equal '{"done":true}', err.response_body
+    assert_equal "https://upload.example.com/session_abc", err.resume_handle.upload_url
+    assert_instance_of Instruction::TerminateFailure, instructions.first
+  end
+
+  def test_out_of_band_cancellation_during_transmission_terminates_as_cancelled
+    state = State.new status: :transmission_sending, upload_url: "https://upload.example.com/session_abc"
+    resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+
+    next_state, instructions = Rules.step state, resp, @config
+
+    assert_equal :cancelled, next_state.status
+    err = next_state.last_error
+    assert_instance_of UploadCancelledError, err
+    assert_equal "Resumable upload session was cancelled (detected while sending a chunk of data)", err.message
+    assert_instance_of Instruction::TerminateFailure, instructions.first
+  end
+
+  def test_out_of_band_cancellation_is_not_resumable
+    state = State.new status: :recovery, upload_url: "https://upload.example.com/session_abc", chunk_size: 512
+    resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+
+    next_state, = Rules.step state, resp, @config
+    err = next_state.last_error
+
+    assert_equal :cancelled, next_state.status
+    assert_instance_of UploadCancelledError, err
+    # The session is gone: rescuing HasResumeHandle must not catch this, or a caller following the
+    # documented "retry with the handle" idiom would loop against a session that can never accept a byte.
+    refute_operator HasResumeHandle, :===, err
+    refute_includes err.message, "(upload session is resumable: see #resume_handle)"
+    assert_equal "Resumable upload session was cancelled " \
+                 "(detected while querying upload offset for recovery)",
+                 err.message
+  end
+
+  def test_client_requested_cancellation_still_completes_normally
+    state = State.new status: :cancelling, upload_url: "https://upload.example.com/session_abc"
+    resp = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "cancelled" }
+
+    next_state, = Rules.step state, resp, @config
+
+    assert_equal :cancelled, next_state.status
+    assert_instance_of UploadCancelledError, next_state.last_error
+    assert_equal :complete_cancellation, Rules.route(:cancelling, :response_cancelled)
   end
 
   def test_invalid_transition_shows_missing_when_upload_status_header_absent
@@ -243,7 +288,9 @@ class RulesErrorTest < Minitest::Test
     assert_equal :error, next_state.status
     err = next_state.last_error
     assert_instance_of BadResponseError, err
-    assert_equal "Resumable upload failed with HTTP 429 RESOURCE_EXHAUSTED: Quota limit reached", err.message
+    assert_equal "Resumable upload failed while initiating upload session with HTTP 429 RESOURCE_EXHAUSTED: " \
+                 "Quota limit reached",
+                 err.message
     assert_equal 429, err.status_code
     assert_equal "RESOURCE_EXHAUSTED", err.status
     assert_equal details, err.status_details
@@ -259,7 +306,9 @@ class RulesErrorTest < Minitest::Test
     assert_equal :error, next_state.status
     err = next_state.last_error
     assert_instance_of BadResponseError, err
-    assert_equal "Resumable upload failed with HTTP 503 Service Unavailable (X-Goog-Upload-Status: missing)", err.message
+    assert_equal "Resumable upload failed while initiating upload session with HTTP 503 Service Unavailable " \
+                 "(X-Goog-Upload-Status: missing)",
+                 err.message
     assert_equal 503, err.status_code
     assert_equal "Service unavailable", err.response_body
   end
@@ -293,7 +342,9 @@ class RulesErrorTest < Minitest::Test
     assert_operator HasResumeHandle, :===, BadResponseError.new
     assert_operator HasResumeHandle, :===, DeadlineExceededError.new
     assert_operator HasResumeHandle, :===, UnseekableStreamError.new
-    assert_operator HasResumeHandle, :===, InvalidTransitionError.new("invalid")
+    refute_operator HasResumeHandle, :===, InvalidTransitionError.new("invalid")
+    assert_operator InvalidTransitionError, :<, InternalError
+    assert_operator InternalError, :===, InvalidTransitionError.new("invalid")
     assert_operator HasResumeHandle, :===, StreamMismatchError.new
     assert_operator HasResumeHandle, :===, RequestFailedError.new("failed")
     refute_operator HasResumeHandle, :===, UploadRejectedError.new
@@ -342,14 +393,12 @@ class RulesErrorTest < Minitest::Test
     assert_equal 512, bad_resp_err.resume_handle.chunk_size
     assert_includes bad_resp_err.message, "(upload session is resumable: see #resume_handle)"
 
-    # 3. Unmatched transition
+    # 3. Unmatched transition — an internal bug, never resumable, even with an established session
     unmatched_err = assert_raises InvalidTransitionError do
       Rules.step state, Object.new, @config
     end
-    refute_nil unmatched_err.resume_handle
-    assert_equal "https://upload.example.com/session_abc", unmatched_err.resume_handle.upload_url
-    assert_equal 512, unmatched_err.resume_handle.chunk_size
-    assert_includes unmatched_err.message, "(upload session is resumable: see #resume_handle)"
+    refute_operator HasResumeHandle, :===, unmatched_err
+    refute_includes unmatched_err.message, "(upload session is resumable: see #resume_handle)"
 
     # 4. Request failed (retries exhausted)
     req_failed = Event::RequestFailed.new(
@@ -390,7 +439,7 @@ class RulesErrorTest < Minitest::Test
     unmatched_err = assert_raises InvalidTransitionError do
       Rules.step state, Object.new, @config
     end
-    assert_nil unmatched_err.resume_handle
+    refute_operator HasResumeHandle, :===, unmatched_err
     refute_includes unmatched_err.message, "(upload session is resumable: see #resume_handle)"
 
     # 4. Request failed before session creation
