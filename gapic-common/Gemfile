@@ -23,7 +23,7 @@ gem "redcarpet", "~> 3.0"
 # checks the bundle for a `toys` dependency and raises IncompatibleToysError
 # when the running toys is outside the declared range, instead of failing
 # later in a confusing way.
-gem "toys", "~> 0.22.0"
+gem "toys", ">= 0.22.0", "< 0.24.1"
 gem "yard", "~> 0.9"
 
 gem "ostruct"
