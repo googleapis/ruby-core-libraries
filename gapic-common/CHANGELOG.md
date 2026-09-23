@@ -1,5 +1,15 @@
 # Release History
 
+### 1.4.0 (2026-09-23)
+
+#### Features
+
+* add custom predicate matching to RetryPolicy ([#59](https://github.com/googleapis/ruby-core-libraries/issues/59)) 
+#### Bug Fixes
+
+* require grpc &gt;= 1.83 for post-quantum key exchange ([#73](https://github.com/googleapis/ruby-core-libraries/issues/73)) 
+* only use emit_default for proto messages ([#75](https://github.com/googleapis/ruby-core-libraries/issues/75)) 
+
 ### 1.3.0 (2026-03-05)
 
 #### Features
