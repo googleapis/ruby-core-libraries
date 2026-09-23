@@ -160,7 +160,16 @@ module Gapic
           request_body_field = request.send body_template.to_sym if request.respond_to? body_template.to_sym
           if request_body_field
             request_hash_without_uri.delete camel_name_for body_template
-            body = request_body_field.to_json emit_defaults: true
+            # `emit_defaults` is only meaningful for, and only accepted by,
+            # `Google::Protobuf::MessageExts#to_json`. When the body template points at a
+            # scalar, enum or repeated field, `to_json` resolves to the json gem's
+            # `Object#to_json`, which has never accepted the keyword: json 2.x silently
+            # discarded unknown keywords, json 3.x raises ArgumentError.
+            body = if request_body_field.is_a? ::Google::Protobuf::MessageExts
+                     request_body_field.to_json emit_defaults: true
+                   else
+                     request_body_field.to_json
+                   end
           end
 
           query_params = build_query_params request_hash_without_uri
