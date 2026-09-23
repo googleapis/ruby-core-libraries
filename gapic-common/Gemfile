@@ -13,6 +13,17 @@ gem "minitest-focus", "~> 1.4"
 gem "minitest-rg", "~> 5.3"
 gem "pry", ">= 0.14"
 gem "redcarpet", "~> 3.0"
+# Pinned to the 0.22.x series deliberately, matching .github/workflows/ci.yml:
+# toys 0.23.0 broke the `build` tool ("Could not find a gemspec") and 0.24.0
+# additionally removed the `alias_tool` directive, so 0.22.0 is the last fully
+# working release. Must be "~> 0.22.0" (>= 0.22.0, < 0.23.0) and not "~> 0.22",
+# which would still admit 0.23 and 0.24.
+#
+# Declaring toys here is what makes the pin enforceable: Toys::Utils::Gems
+# checks the bundle for a `toys` dependency and raises IncompatibleToysError
+# when the running toys is outside the declared range, instead of failing
+# later in a confusing way.
+gem "toys", "~> 0.22.0"
 gem "yard", "~> 0.9"
 
 gem "ostruct"
