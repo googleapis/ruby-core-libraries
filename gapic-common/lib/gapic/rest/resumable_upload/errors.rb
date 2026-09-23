@@ -567,15 +567,6 @@ module Gapic
       #
       class SessionStateError < Gapic::Common::Error
       end
-
-      ##
-      # @private
-      # Raised when an internal state machine or driver invariant is violated.
-      # Produced by {Rules} when an unlisted shape or recipe is encountered, and by
-      # {Driver} when a recipe emits a malformed instruction batch.
-      #
-      class InternalError < Gapic::Common::Error
-      end
     end
   end
 end
