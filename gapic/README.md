@@ -22,9 +22,7 @@ See the [CONTRIBUTING](CONTRIBUTING.md) documentation for more information on ho
 
 ## Versioning
 
-This library is currently a **preview** with no guarantees of stability or support. Please get
-involved and let us know if you find it useful and we'll work towards a stable version.
+This library follows [Semantic Versioning](http://semver.org/).
 
-## Disclaimer
-
-This is not an official Google product.
+It is currently in major version zero (0.y.z), which means that anything may
+change at any time and the public API should not be considered stable.
