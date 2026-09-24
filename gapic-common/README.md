@@ -58,3 +58,9 @@ ruby -ropenssl -e 'puts OpenSSL::OPENSSL_LIBRARY_VERSION'
 Contributions to this library are always welcome and highly encouraged.
 
 See the [CONTRIBUTING](CONTRIBUTING.md) documentation for more information on how to get started.
+
+## Versioning
+
+This library follows [Semantic Versioning](http://semver.org/).
+
+This library is considered to be stable and will not have backwards-incompatible changes introduced in subsequent minor releases.
