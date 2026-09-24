@@ -461,9 +461,7 @@ module Gapic
             :fail_with_rejected
           # Every HTTP response shape in an HTTP-awaiting status that no arm above claims. Spelled out per
           # status rather than as a `[six statuses, five shapes]` cross product: the product would also cover
-          # `[:starting, :response_active]`, `[:transmission_sending, :response_active]` and
-          # `[:cancelling, :response_cancelled]`, which are handled above — the last of them a *successful*
-          # cancel acknowledgement.
+          # combinations which are handled above.
           #
           # Note `[:starting, :response_cat2]`: initiation fails on a Category 2 response rather than
           # recovering, unlike the transmission and finalizing statuses, because there is no upload to

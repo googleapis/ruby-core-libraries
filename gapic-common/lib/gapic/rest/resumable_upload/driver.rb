@@ -577,25 +577,36 @@ module Gapic
 
             status_hdr = Rules.header_value event.headers, "x-goog-upload-status"
             return event unless status_hdr.nil? || status_hdr.empty?
-            return event if Rules::FATAL_STATUS_CODES.include? event.status
 
-            err = BadResponseError.new "Missing X-Goog-Upload-Status header in start response",
-                                       event.status,
-                                       headers: event.headers
-            # `retry_with_deadline?` is public; its `@private` tag hides it from docs, not from callers.
-            can_retry = policy.retry_with_deadline? && policy.call(event)
-            unless can_retry
-              if event.status == 200
-                failed_event = Event::RequestFailed.new(
-                  kind: :retries_exhausted, message: err.message, source_error: err
-                )
-                @upload_log.wire_failure failed_event
-                return failed_event
-              end
-              return event
+            # Non-200 responses with missing protocol headers (e.g. a 503 from GFE) are retried
+            # inside ClientStub and should be classified by their status code rather than as a
+            # missing-header error.
+            return event unless event.status == 200
+
+            # Checking for policy here to avoid retrying into timeout
+            if policy.call
+              attempt += 1
+              next
             end
-            attempt += 1
+            return headerless_start_failure event
           end
+        end
+
+        ##
+        # @private
+        # Builds and logs the `:retries_exhausted` failure event for a `200` initiation response
+        # that lacked `X-Goog-Upload-Status` once the start retry policy is out of budget.
+        #
+        # @param event [Event::HttpResponse] Final headerless `200` initiation response
+        # @return [Event::RequestFailed]
+        #
+        def headerless_start_failure event
+          err = BadResponseError.new "Missing X-Goog-Upload-Status header in start response",
+                                     event.status, headers: event.headers
+          failed_event = Event::RequestFailed.new kind: :retries_exhausted, message: err.message,
+                                                  source_error: err
+          @upload_log.wire_failure failed_event
+          failed_event
         end
 
         ##

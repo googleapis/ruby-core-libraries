@@ -97,8 +97,9 @@ module Gapic
         ##
         # @private
         # Default retry policy for session initiation requests (start).
-        # Missing X-Goog-Upload-Status header is retriable across any response code,
-        # including 200 (predicate returns true).
+        # Its predicate treats a missing X-Goog-Upload-Status header as retriable across non-fatal
+        # 4xx/5xx responses in ClientStub; headerless 200 responses are retried by Driver#execute_send_start
+        # via the no-argument RetryPolicy#call.
         #
         # @return [Gapic::Common::RetryPolicy]
         def self.default_start
