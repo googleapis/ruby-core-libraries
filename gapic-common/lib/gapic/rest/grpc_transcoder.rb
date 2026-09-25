@@ -155,10 +155,10 @@ module Gapic
           next unless [".", ".."].include? segment
           if field_binding.preserve_slashes
             raise ::Gapic::Common::Error,
-                  "Value for #{field_binding.field_path} must not contain segments that are exactly . or .."
+                  "Value for #{field_binding.field_path} must not contain segments that are exactly '#{segment}'."
           else
             raise ::Gapic::Common::Error,
-                  "Invalid value #{segment} for #{field_binding.field_path}"
+                  "Invalid value for #{field_binding.field_path} '#{segment}'."
           end
         end
       end

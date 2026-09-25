@@ -343,13 +343,13 @@ class GrpcTranscoderTest < Minitest::Test
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: "..")
     end
-    assert_equal "Invalid value .. for sub_request.name", err.message
+    assert_equal "Invalid value for sub_request.name '..'.", err.message
 
     # Traversal segment '.' in standard parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_std.transcode example_request(name: "p1", sub_name: ".")
     end
-    assert_equal "Invalid value . for sub_request.name", err.message
+    assert_equal "Invalid value for sub_request.name '.'.", err.message
 
     # URL-encoded traversal segment '%2e%2e' in standard parameter should be percent-escaped
     _uri_method, uri, _query_params, _body =
@@ -388,19 +388,19 @@ class GrpcTranscoderTest < Minitest::Test
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/../../../../doc2", sub_name: "col")
     end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "Value for name must not contain segments that are exactly '..'.", err.message
 
     # Segment '.' anywhere in parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/./a", sub_name: "col")
     end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "Value for name must not contain segments that are exactly '.'.", err.message
 
     # Prefix traversal in the parameter should fail
     err = assert_raises ::Gapic::Common::Error do
       transcoder_wild.transcode example_request(name: "projects/p/databases/../documents/doc/a/b", sub_name: "col")
     end
-    assert_equal "Value for name must not contain segments that are exactly . or ..", err.message
+    assert_equal "Value for name must not contain segments that are exactly '..'.", err.message
 
     # URL-encoded segment '%2e%2e' in path parameter should be percent-escaped
     _uri_method, uri, _query_params, _body =
