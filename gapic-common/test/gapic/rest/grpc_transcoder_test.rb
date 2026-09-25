@@ -299,6 +299,130 @@ class GrpcTranscoderTest < Minitest::Test
     assert_transcoding_matches transcoder, test_cases
   end
 
+  def test_transcode_validation_parameter_injection
+    # 1. Parameter Injection (Rejection check)
+    # Proto: post: "/v3/{name=projects/*/locations/*/agents/*/sessions/*}:detectIntent"
+    # Template: v3/{name}:detectIntent (representing Dialogflow session method)
+    transcoder_inj = Gapic::Rest::GrpcTranscoder.new.with_bindings(
+      uri_method: :post,
+      uri_template: "/v3/{name}:detectIntent",
+      matches: [["name", %r{^projects/[^/]+/locations/[^/]+/agents/[^/]+/sessions/[^/]+$}, false]]
+    )
+
+    # Valid payload should pass
+    transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1")
+
+    # Payload with query injection should succeed and escape the ? character
+    _uri_method, uri, _query_params, _body =
+      transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1?key=val")
+    assert_equal "/v3/projects/p/locations/l/agents/a/sessions/s1%3Fkey%3Dval:detectIntent", uri
+
+    # Payload with fragment injection should succeed and escape the # character
+    _uri_method, uri, _query_params, _body =
+      transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1#frag")
+    assert_equal "/v3/projects/p/locations/l/agents/a/sessions/s1%23frag:detectIntent", uri
+  end
+
+  def test_transcode_validation_standard_wildcard
+    # 2. Standard Single-Wildcard Matchers (*)
+    # Proto: delete: "/v3/projects/{name}/webhooks/{sub_request.name}"
+    # Template: v3/projects/{name}/webhooks/{sub_request.name}
+    transcoder_std = Gapic::Rest::GrpcTranscoder.new.with_bindings(
+      uri_method: :delete,
+      uri_template: "/v3/projects/{name}/webhooks/{sub_request.name}",
+      matches: [
+        ["name", %r{^[^/]+$}, false],
+        ["sub_request.name", %r{^[^/]+$}, false]
+      ]
+    )
+
+    # Valid payload should pass
+    transcoder_std.transcode example_request(name: "p1", sub_name: "w1")
+
+    # Traversal segment '..' in standard parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_std.transcode example_request(name: "p1", sub_name: "..")
+    end
+    assert_equal "Invalid value for sub_request.name '..'.", err.message
+
+    # Traversal segment '.' in standard parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_std.transcode example_request(name: "p1", sub_name: ".")
+    end
+    assert_equal "Invalid value for sub_request.name '.'.", err.message
+
+    # URL-encoded traversal segment '%2e%2e' in standard parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_std.transcode example_request(name: "p1", sub_name: "%2e%2e")
+    assert_equal "/v3/projects/p1/webhooks/%252e%252e", uri
+
+    # URL-encoded traversal segment '%2e' in standard parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_std.transcode example_request(name: "p1", sub_name: "%2e")
+    assert_equal "/v3/projects/p1/webhooks/%252e", uri
+
+    # Slashes in standard parameter should fail matching (regex rejects slashes)
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_std.transcode example_request(name: "p1", sub_name: "w1/w2")
+    end
+    assert err.message.include?("does not match any transcoding template")
+  end
+
+  def test_transcode_validation_path_wildcard
+    # 3. Path/Double-Wildcard Matchers (**)
+    # Proto: post: "/v1/{name=projects/*/databases/*/documents/*/**}/{sub_request.name}"
+    # Template: v1/{name}/{sub_request.name}
+    transcoder_wild = Gapic::Rest::GrpcTranscoder.new.with_bindings(
+      uri_method: :post,
+      uri_template: "/v1/{name}/{sub_request.name}",
+      matches: [
+        ["name", %r{^projects/[^/]+/databases/[^/]+/documents/[^/]+(?:/(?<__wildcard__>.*))?$}, true],
+        ["sub_request.name", %r{^[^/]+$}, false]
+      ]
+    )
+
+    # Valid path should pass
+    transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/a/b/c", sub_name: "col")
+
+    # Segment '..' anywhere in parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/../../../../doc2", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly '..'.", err.message
+
+    # Segment '.' anywhere in parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/./a", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly '.'.", err.message
+
+    # Prefix traversal in the parameter should fail
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "projects/p/databases/../documents/doc/a/b", sub_name: "col")
+    end
+    assert_equal "Value for name must not contain segments that are exactly '..'.", err.message
+
+    # URL-encoded segment '%2e%2e' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e/doc2", sub_name: "col")
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e%252e/doc2/col", uri
+
+    # URL-encoded segment '%2e' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e/a", sub_name: "col")
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e/a/col", uri
+
+    # URL-encoded traversal slashes '..%2f..%2f' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/..%2f..%2fescape-db", sub_name: "col")
+    assert_equal "/v1/projects/p/databases/d/documents/doc/..%252f..%252fescape-db/col", uri
+
+    # Mixed URL-encoded dots and slashes '%2e%2e%2f%2e%2e%2f' in path parameter should be percent-escaped
+    _uri_method, uri, _query_params, _body =
+      transcoder_wild.transcode example_request(name: "projects/p/databases/d/documents/doc/%2e%2e%2f%2e%2e%2fescape-db", sub_name: "col")
+    assert_equal "/v1/projects/p/databases/d/documents/doc/%252e%252e%252f%252e%252e%252fescape-db/col", uri
+  end
+
   private
 
   def assert_transcoding_matches transcoder, test_cases
