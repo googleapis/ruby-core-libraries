@@ -212,8 +212,8 @@ module Gapic
     # @raise [Gapic::Rest::ResumableUpload::StreamMismatchError] If stream content or length does not match
     #   protocol expectations
     # @raise [Gapic::Rest::ResumableUpload::UploadRejectedError] If the server explicitly rejects the upload
-    # @raise [Gapic::Rest::ResumableUpload::InternalError] If the library detects an internal invariant
-    #   breach; this signals a bug in this library rather than a caller or server error
+    # @raise [Gapic::Common::Error] Any other subclass signals a protocol implementation bug rather than a
+    #   caller or server error
     #
     def start stream:,
               content_type: nil,
@@ -278,8 +278,8 @@ module Gapic
     # @raise [Gapic::Rest::ResumableUpload::StreamMismatchError] If stream content or length does not match
     #   the resumed upload
     # @raise [Gapic::Rest::ResumableUpload::UploadRejectedError] If the server explicitly rejects the upload
-    # @raise [Gapic::Rest::ResumableUpload::InternalError] If the library detects an internal invariant
-    #   breach; this signals a bug in this library rather than a caller or server error
+    # @raise [Gapic::Common::Error] Any other subclass signals a protocol implementation bug rather than a
+    #   caller or server error
     #
     def resume stream:,
                resume_handle: nil,

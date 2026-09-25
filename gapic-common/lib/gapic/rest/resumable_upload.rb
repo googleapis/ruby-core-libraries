@@ -62,6 +62,8 @@ module Gapic
     #   upload was in flight. A cancelled session cannot be resumed, so this error carries no {ResumeHandle} (final).
     # * {SessionStateError} - Upload session lifecycle rule violation, e.g. starting a second run while one
     #   is in flight (final).
+    # * Any other `Gapic::Common::Error` subclass signals a protocol implementation bug rather than a caller
+    #   or server error (final).
     #
     module ResumableUpload
       ##
