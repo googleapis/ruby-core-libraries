@@ -78,5 +78,8 @@ jobs:
         GITHUB_EVENT_NAME: ${{ github.event_name }}
         GITHUB_EVENT_PATH: ${{ github.event_path }}
         EXTRA_FLAGS: ${{ github.event.inputs.flags }}
+      # Force bash: windows-latest defaults to pwsh, where "$VAR" reads an
+      # (unset) PowerShell variable instead of the env var above.
+      shell: bash
       run: |
         toys ci -v ${{ matrix.task }} --github-event-name="$GITHUB_EVENT_NAME" --github-event-payload="$GITHUB_EVENT_PATH" $EXTRA_FLAGS
