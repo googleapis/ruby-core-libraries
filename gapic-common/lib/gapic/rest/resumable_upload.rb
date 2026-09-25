@@ -47,8 +47,8 @@ module Gapic
     #   begin
     #     upload.start stream: File.open("movie.mp4", "rb"), upload_size: File.size("movie.mp4")
     #   rescue Gapic::Rest::ResumableUpload::HasResumeHandle => e
-    #     handle = e.resume_handle
-    #     upload.resume stream: File.open("movie.mp4", "rb"), resume_handle: handle
+    #     raise unless e.resume_handle
+    #     upload.resume stream: File.open("movie.mp4", "rb"), resume_handle: e.resume_handle
     #   end
     #
     # ### Error Types
@@ -58,8 +58,8 @@ module Gapic
     # * {UnseekableStreamError} - Stream rewinding required on an unseekable stream (includes {HasResumeHandle}).
     # * {StreamMismatchError} - Stream content or length does not match resumed upload (includes {HasResumeHandle}).
     # * {UploadRejectedError} - Server explicitly rejected the upload session (final).
-    # * {UploadCancelledError} - Upload session was cancelled, either by this client or on the server while the
-    #   upload was in flight. A cancelled session cannot be resumed, so this error carries no {ResumeHandle} (final).
+    # * {UploadCancelledError} - Upload session was cancelled on the server while the upload was in flight. A
+    #   cancelled session cannot be resumed, so this error carries no {ResumeHandle} (final).
     # * {SessionStateError} - Upload session lifecycle rule violation, e.g. starting a second run while one
     #   is in flight (final).
     # * Any other `Gapic::Common::Error` subclass signals a protocol implementation bug rather than a caller

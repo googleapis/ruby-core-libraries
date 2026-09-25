@@ -177,11 +177,13 @@ module Gapic
         attr_reader :resume_handle
 
         ##
+        # @private
         # Suffix appended to error message when a resume handle is present.
         # @return [String]
         RESUMABLE_SUFFIX = " (upload session is resumable: see #resume_handle)"
 
         ##
+        # @private
         # Appends the uniform resumable suffix if resume_handle is non-nil.
         #
         # @param message [String, nil] Error message
@@ -278,6 +280,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates an UnseekableStreamError with optional resume handle.
         #
         # @param message [String, nil] Descriptive error message
@@ -308,6 +311,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates a StreamMismatchError with optional resume handle.
         #
         # @param message [String, nil] Error message
@@ -352,6 +356,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates a BadResponseError from an HTTP response event.
         #
         # @param event [Object] HTTP response event
@@ -394,6 +399,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates an UploadRejectedError from an HTTP response event.
         #
         # @param event [Object] HTTP response event
@@ -428,6 +434,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates an UploadCancelledError from a source event or message string.
         #
         # @param source [Object, String, nil] Source event or message
@@ -468,6 +475,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates a DeadlineExceededError with optional resume handle.
         #
         # @param message [String, nil] Deadline exceeded message
@@ -541,6 +549,7 @@ module Gapic
         end
 
         ##
+        # @private
         # Creates a RequestFailedError from a failure event or error.
         #
         # @param event_or_error [Event::RequestFailed, StandardError] Source event or error

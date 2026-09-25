@@ -65,7 +65,7 @@ module Gapic
   # | Budget | Set by | Covers |
   # |---|---|---|
   # | whole upload | `upload_timeout:` on {#start} and {#resume} | every request, retry and byte of the run |
-  # | initiation request | per-call `timeout`, or `timeout:` in `start_retry_policy` | creating the session |
+  # | initiation request | per-call `timeout` | creating the session |
   #
   # The per-call `timeout` a client method takes reaches only the initiation request. An upload still
   # transferring bytes an hour later has long outlived it, and that is expected. To bound the run as a
@@ -197,10 +197,9 @@ module Gapic
     # @param on_progress [Proc, nil] Called as `->(progress)` with a {Gapic::Rest::ResumableUpload::Progress}
     #   instance. Runs synchronously on the upload thread and must not block; an exception raised inside it
     #   aborts the run and propagates out of this method.
-    # @return [Object] The final response decoded into the handle's response type, or the raw response body
-    #   (a String, or `nil` when the final response carried none) when the handle has no response type.
-    # @raise [ArgumentError] If the initiation headers set a reserved protocol header, if a retry policy is
-    #   neither a {Gapic::Common::RetryPolicy}, a Hash, nor `nil`, or if the client cannot perform REST calls
+    # @return [Object] The final response decoded into the handle's response type.
+    # @raise [ArgumentError] If the call metadata sets a reserved `X-Goog-Upload-*` protocol header, or if the
+    #   client cannot perform REST calls
     # @raise [Gapic::Rest::ResumableUpload::SessionStateError] If a run is already in progress
     # @raise [Gapic::Rest::ResumableUpload::RequestFailedError] If a transport error, timeout, or retry
     #   exhaustion occurs
@@ -262,11 +261,9 @@ module Gapic
     # @param upload_timeout [Numeric, nil] Budget in seconds for the **whole run**. See {#start}.
     # @param on_progress [Proc, nil] Called as `->(progress)` with a {Gapic::Rest::ResumableUpload::Progress}
     #   instance. Runs synchronously on the upload thread and must not block.
-    # @return [Object] The final response decoded into the handle's response type, or the raw response body
-    #   (a String, or `nil` when the final response carried none) when the handle has no response type.
-    # @raise [ArgumentError] If there is no upload to resume, if the stream is not positioned at byte 0, if
-    #   a retry policy is neither a {Gapic::Common::RetryPolicy}, a Hash, nor `nil`, or if the client cannot
-    #   perform REST calls
+    # @return [Object] The final response decoded into the handle's response type.
+    # @raise [ArgumentError] If there is no upload to resume, if the stream is not positioned at byte 0, or if
+    #   the client cannot perform REST calls
     # @raise [Gapic::Rest::ResumableUpload::SessionStateError] If a run is already in progress
     # @raise [Gapic::Rest::ResumableUpload::RequestFailedError] If a transport error, timeout, or retry
     #   exhaustion occurs
