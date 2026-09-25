@@ -60,19 +60,22 @@ class ErrorOnStartTest < ShowcaseIntegrationTest
     assert_equal :completed, phases.last
   end
 
-  # A2. Verifies missing status header / 400 on start is retried and upload completes.
-  def test_missing_header_retriable_on_start_400
+  # A2. Verifies a 400 on start is not retried: it is outside the default retry codes, and a missing status
+  # header is retried only on a 200.
+  def test_400_on_start_is_not_retried
     upload = build_start_error_upload(
       scenario:           "non_fatal_error_on_start",
       scenario_config:    { error_code: 400, failure_count: 1 },
       start_retry_policy: FAST_RETRY
     )
 
-    parsed = JSON.parse upload.start(**start_error_args)
+    err = assert_raises Gapic::Rest::ResumableUpload::BadResponseError do
+      upload.start(**start_error_args)
+    end
 
-    assert_equal PAYLOAD_SIZE, parsed["size"]
-    assert_equal 1, phases.count(:initiating)
-    assert_equal :completed, phases.last
+    assert_equal 400, err.status_code
+    assert_equal 1, @log_output.string.scan('"command":"start"').size
+    refute_includes phases, :uploading
   end
 
   # A3. Verifies retry exhaustion on start with high failure count times out within ~3s without uploading.

@@ -90,26 +90,27 @@ module Gapic
   # Retry behavior is partitioned across three policies. Only the initiation policy is caller-supplied;
   # the other two are the protocol's own and govern the requests no call option describes.
   #
-  # All three share the same default retry codes and exponential backoff settings:
-  #
-  # | Setting | Default |
-  # |---|---|
-  # | `retry_codes` | `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, `INTERNAL` |
-  # | `initial_delay` | `1.0` s |
-  # | `max_delay` | `15.0` s |
-  # | `multiplier` | `1.3` |
-  #
-  # They differ in which requests they govern and how a missing or empty `X-Goog-Upload-Status` response
-  # header is treated:
-  #
-  # | Policy | Governs | Missing status header |
+  # | Policy | Governs | Default `retry_codes` |
   # |---|---|---|
-  # | initiation | session initiation | **Retriable** on any status (incl. `200`), unless fatal |
-  # | control plane | `query` and `cancel` | No predicate; decided on `retry_codes` alone |
-  # | data plane | `upload` and `finalize` | **Not** retriable |
+  # | initiation | session initiation | the 4xx and 5xx sets below |
+  # | control plane | `query` and `cancel` | the 4xx and 5xx sets below |
+  # | data plane | `upload` and `finalize` | the 5xx set below only |
   #
-  # Initiation treats a response missing `X-Goog-Upload-Status` as gateway noise worth retrying; the data
-  # plane treats it as a response it cannot interpret and refuses to replay bytes against it.
+  # * 4xx set: `ALREADY_EXISTS` (HTTP `409`), `RESOURCE_EXHAUSTED` (`429`), `CANCELLED` (`499`).
+  # * 5xx set: `INTERNAL` (HTTP `500`), `UNAVAILABLE` (`503`), `DEADLINE_EXCEEDED` (`504`).
+  #
+  # None of the defaults carries a `retry_predicate`, so one supplied by the caller is consulted as-is,
+  # ahead of `retry_codes`. All three share the same backoff: `initial_delay` `1.0` s, `max_delay`
+  # `15.0` s, `multiplier` `1.3`.
+  #
+  # Some decisions belong to the protocol and are made before a policy is asked:
+  #
+  # * Initiation and control plane requests are re-sent, within the policy's deadline, after a connection
+  #   or TLS failure, and after a `200` response missing `X-Goog-Upload-Status`.
+  # * Data plane requests are never re-sent after an outcome that leaves the server offset unknown — a
+  #   timeout, a connection failure, a missing status header, or any `4xx`. The upload re-queries the
+  #   session and resumes from the offset the server reports instead.
+  # * A response carrying `X-Goog-Upload-Status: final` is never retried.
   #
   class ResumableUpload
     ##

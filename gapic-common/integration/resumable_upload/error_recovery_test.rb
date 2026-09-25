@@ -103,7 +103,27 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
   end
 
   # B5. Verifies unrecoverable 500 without status header triggers repeated recovery until DeadlineExceededError.
+  # A 500 is a default retry code on every plane, so the Driver re-sends each request until its plane budget
+  # runs out; the budgets are kept well inside the upload timeout so the exhausted outcomes reach Rules.
   def test_no_headers_failure_recovers_until_deadline_exceeded
+    short_budget = FAST_RETRY.merge timeout: 0.1
+    upload = build_upload(
+      scenario:                   SCENARIO,
+      scenario_config:            { failure_count: 0, action_after_failures: "terminate" },
+      control_plane_retry_policy: short_budget,
+      data_plane_retry_policy:    short_budget
+    )
+
+    assert_raises Gapic::Rest::ResumableUpload::DeadlineExceededError do
+      upload.start(**start_args(upload_timeout: 1))
+    end
+
+    assert_operator phases.count(:recovering), :>=, 2
+  end
+
+  # B6. Verifies an unrecoverable headerless 500 on the data plane is re-sent in place, without entering
+  # recovery, while the data plane budget lasts.
+  def test_no_headers_failure_is_resent_within_the_data_plane_budget
     upload = build_upload(
       scenario:        SCENARIO,
       scenario_config: { failure_count: 0, action_after_failures: "terminate" }
@@ -113,6 +133,7 @@ class ErrorRecoveryTest < ShowcaseIntegrationTest
       upload.start(**start_args(upload_timeout: 1))
     end
 
-    assert_operator phases.count(:recovering), :>=, 2
+    refute_includes phases, :recovering
+    assert_operator @log_output.string.scan('"command":"upload"').size, :>=, 2
   end
 end

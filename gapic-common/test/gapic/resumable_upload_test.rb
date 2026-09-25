@@ -27,6 +27,10 @@ class ResumableUploadTest < Minitest::Test
   INITIAL_BODY = '{"name":"test.txt"}'
   SESSION_URL = "https://upload.example.com/session_1"
 
+  # A zero budget: the Driver re-sends nothing, so a scripted connection failure on initiation or a query
+  # surfaces at once instead of being retried against the next scripted response.
+  NO_RETRY = { timeout: 0 }.freeze
+
   class ScriptedClientStub
     attr_reader :requests
 
@@ -347,7 +351,7 @@ class ResumableUploadTest < Minitest::Test
   def test_run_slot_is_released_after_a_failed_run
     stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom")]
-    upload = build_upload stub: stub
+    upload = build_upload stub: stub, control_plane_retry_policy: NO_RETRY
 
     assert_raises RequestFailedError do
       start_upload upload, stream: StringIO.new("01"), upload_size: 2
@@ -383,7 +387,7 @@ class ResumableUploadTest < Minitest::Test
   def test_configuration_error_leaves_an_earlier_runs_resume_handle_intact
     stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom")]
-    upload = build_upload stub: stub
+    upload = build_upload stub: stub, control_plane_retry_policy: NO_RETRY
     assert_raises RequestFailedError do
       start_upload upload, stream: StringIO.new("01"), upload_size: 2
     end
@@ -401,7 +405,7 @@ class ResumableUploadTest < Minitest::Test
     stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom")]
-    upload = build_upload stub: stub
+    upload = build_upload stub: stub, start_retry_policy: NO_RETRY, control_plane_retry_policy: NO_RETRY
     assert_raises RequestFailedError do
       start_upload upload, stream: StringIO.new("01"), upload_size: 2
     end
@@ -435,7 +439,7 @@ class ResumableUploadTest < Minitest::Test
     stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom"),
                                    query_response, final_response('{"text":"resumed"}')]
-    upload = build_upload stub: stub
+    upload = build_upload stub: stub, control_plane_retry_policy: NO_RETRY
     assert_raises RequestFailedError do
       start_upload upload, stream: StringIO.new("01"), upload_size: 2
     end
@@ -467,7 +471,8 @@ class ResumableUploadTest < Minitest::Test
   end
 
   def test_bare_resume_after_an_unresumable_failure_raises_argument_error
-    upload = build_upload stub: ScriptedClientStub.new([Faraday::ConnectionFailed.new("boom")])
+    upload = build_upload stub:               ScriptedClientStub.new([Faraday::ConnectionFailed.new("boom")]),
+                          start_retry_policy: NO_RETRY
     assert_raises RequestFailedError do
       start_upload upload, stream: StringIO.new("01"), upload_size: 2
     end
@@ -558,7 +563,7 @@ class ResumableUploadTest < Minitest::Test
   def failing_upload **kwargs
     stub = ScriptedClientStub.new [initiation_response, Faraday::ConnectionFailed.new("boom"),
                                    Faraday::ConnectionFailed.new("boom")]
-    build_upload stub: stub, **kwargs
+    build_upload stub: stub, control_plane_retry_policy: NO_RETRY, **kwargs
   end
 
   def test_error_handler_replaces_the_raised_error

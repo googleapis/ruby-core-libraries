@@ -70,9 +70,8 @@ module Gapic
       # retry policy.
       #
       # Returns a **Hash**, never a policy object: the protocol treats a {Gapic::Common::RetryPolicy} as a
-      # wholesale replacement and a Hash as a per-key override. Initiation's default policy carries a
-      # predicate that treats a response missing `X-Goog-Upload-Status` as retriable gateway noise, and
-      # handing over an object would silently drop it.
+      # wholesale replacement and a Hash as a per-key override, so a Hash keeps every protocol default the
+      # caller did not set (notably the initiation `retry_codes`).
       #
       # `timeout` is the one setting the caller cannot express here: it is set unconditionally from the
       # call's own timeout and becomes the local deadline of the initiation request alone — the
@@ -84,10 +83,11 @@ module Gapic
       #
       # Everything else the caller set is carried across as-is, by asking the policy what it carries
       # ({Gapic::Common::RetryPolicy#overrides}) rather than inferring it from the readers, so a choice
-      # that happens to equal a library default still lands. That includes `retry_predicate`: a caller
-      # who supplies one **replaces** the initiation predicate rather than composing with it, and so
-      # gives up the missing-`X-Goog-Upload-Status` handling. There is no chaining — a predicate that
-      # returns `nil` falls through to `retry_codes`, not to the predicate it displaced.
+      # that happens to equal a library default still lands. That includes `retry_predicate`: the default
+      # initiation policy has none, so a caller's predicate is consulted as-is, ahead of `retry_codes`.
+      # The protocol's own retries (connection failures and a `200` without `X-Goog-Upload-Status`) and
+      # its refusals (a `final` rejection) are decided before the policy is asked, so no predicate can
+      # disable or override them.
       #
       # @param options [Gapic::CallOptions, nil] Per-call options from a generated client method
       # @return [Hash] Overrides for the initiation retry policy

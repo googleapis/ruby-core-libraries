@@ -83,8 +83,9 @@ class ResumeTest < ShowcaseIntegrationTest
     refute_includes @log_output.string, "retry_recovery"
   end
 
-  # D3b. Non-fatal 409 error on query during resume triggers protocol retry_recovery without progress notification.
-  def test_resume_query_409_triggers_retry_recovery
+  # D3b. Non-fatal 409 error on query during resume is re-sent by the Driver (409 is a default control plane
+  # retry code), so Rules never sees it and no retry_recovery or progress notification occurs.
+  def test_resume_query_409_is_retried_by_the_driver
     upload_url = raw_start(
       scenario:        "non_fatal_error_on_query",
       scenario_config: { error_code: 409, failure_count: 1 },
@@ -100,7 +101,8 @@ class ResumeTest < ShowcaseIntegrationTest
     assert_equal DEFAULT_PAYLOAD_SIZE, parsed["size"]
     assert_equal [:initiating, :uploading, :uploading, :uploading, :finalizing, :completed], phases
     refute_includes phases, :recovering
-    assert_includes @log_output.string, "retry_recovery"
+    refute_includes @log_output.string, "retry_recovery"
+    assert_includes @log_output.string, '"startAttempt":2,"command":"query"'
   end
 
   # D4. Resume fast-forwards by discarding bytes on an unseekable stream starting at byte 0.

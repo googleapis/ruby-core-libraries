@@ -91,7 +91,8 @@ module Gapic
         # Signals an HTTP request failure (e.g. request timeout, transport connection failure, or retries exhausted).
         #
         # @!attribute [r] kind
-        #   @return [Symbol] Failure kind: `:timeout`, `:connection_failed`, or `:retries_exhausted`
+        #   @return [Symbol] Failure kind: `:timeout`, `:connection_failed`, `:retries_exhausted` (a transport
+        #     error of no more specific kind), or `:unknown` (a non-transport error, e.g. a credentials failure)
         # @!attribute [r] message
         #   @return [String, nil] Human-readable failure summary
         # @!attribute [r] source_error
@@ -102,7 +103,7 @@ module Gapic
           # @private
           # Initializes a RequestFailed event.
           #
-          # @param kind [Symbol] Failure kind (`:timeout`, `:connection_failed`, `:retries_exhausted`)
+          # @param kind [Symbol] Failure kind (`:timeout`, `:connection_failed`, `:retries_exhausted`, `:unknown`)
           # @param message [String, nil] Human-readable failure summary
           # @param source_error [StandardError, nil] Original underlying exception
           #

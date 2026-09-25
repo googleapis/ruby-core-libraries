@@ -23,6 +23,7 @@ require "gapic/rest/resumable_upload/errors"
 require "gapic/rest/resumable_upload/events"
 require "gapic/rest/resumable_upload/instructions"
 require "gapic/rest/resumable_upload/retry_policies"
+require "gapic/rest/resumable_upload/driver/retry_decider"
 require "gapic/rest/resumable_upload/driver/upload_log"
 
 module Gapic
@@ -35,8 +36,8 @@ module Gapic
       # and delegates state transitions to Core.
       #
       # The outer tier of the three-tier design. All side effects live here; all protocol decisions live in
-      # {Rules}, which carries the state graph and the error category taxonomy. Category 1 transient retries
-      # are absorbed here by `Gapic::Common::RetryPolicy` and never reach {Core}. See
+      # {Rules}, which carries the state graph and the error category taxonomy. Every retry decision is made
+      # here by {RetryDecider}; `ClientStub` is handed a never-retry policy. See
       # `design/resumable_upload/implementation-guide.md` section 2.5 for the buffer and stream position
       # invariants, and section 6.3 for the deadline model.
       #
@@ -55,6 +56,13 @@ module Gapic
         # Default base timeout in seconds (1 hour).
         # @return [Integer]
         BASE_TIMEOUT = 3_600
+
+        ##
+        # @private
+        # Retry policy handed to `ClientStub` for every request, so that each `ClientStub` call is exactly one
+        # attempt and {RetryDecider} makes every retry decision. `Gapic::CallOptions` accepts a Proc policy.
+        # @return [Proc]
+        CLIENT_STUB_NO_RETRY = ->(_error) { false }
 
         # @private
         # @return [Core]
@@ -364,20 +372,23 @@ module Gapic
 
         ##
         # @private
-        # Computes the per-request timeout bounded by the global monotonic deadline.
+        # Computes the per-attempt timeout: whatever is left of the global monotonic deadline, and of the
+        # command's own retry budget when the command has one.
         #
         # @param retry_policy [Gapic::Common::RetryPolicy, nil] Target command retry policy
-        # @return [Numeric] Effective per-request timeout
+        # @param started_at [Numeric, nil] Monotonic time the command started; `nil` grants the full budget
+        # @return [Numeric] Effective per-attempt timeout
         #
-        def request_timeout retry_policy
+        def request_timeout retry_policy, started_at: nil
           remaining = if @deadline
-                        [@deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max
+                        [@deadline - monotonic_now, 0].max
                       else
                         resolve_timeout
                       end
-          return [remaining, retry_policy.timeout].min if retry_policy&.timeout
+          return remaining unless retry_policy&.timeout
 
-          remaining
+          elapsed = started_at ? monotonic_now - started_at : 0
+          (retry_policy.timeout - elapsed).clamp 0, remaining
         end
 
         ##
@@ -563,50 +574,9 @@ module Gapic
         # @return [Event::HttpResponse, Event::RequestFailed, Event::GlobalDeadlineExceeded]
         #
         def execute_send_start instruction
-          policy = @start_retry_policy.dup.start!
-          headers = start_headers instruction
-          attempt = 1
-
-          loop do
-            return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
-
-            event = make_post_request instruction.url, headers: headers, body: instruction.body,
-                                      retry_policy: policy, method_name: "#{@method_name_prefix}.start",
-                                      start_attempt: attempt
-            return event unless event.is_a? Event::HttpResponse
-
-            status_hdr = Rules.header_value event.headers, "x-goog-upload-status"
-            return event unless status_hdr.nil? || status_hdr.empty?
-
-            # Non-200 responses with missing protocol headers (e.g. a 503 from GFE) are retried
-            # inside ClientStub and should be classified by their status code rather than as a
-            # missing-header error.
-            return event unless event.status == 200
-
-            # Checking for policy here to avoid retrying into timeout
-            if policy.call
-              attempt += 1
-              next
-            end
-            return headerless_start_failure event
-          end
-        end
-
-        ##
-        # @private
-        # Builds and logs the `:retries_exhausted` failure event for a `200` initiation response
-        # that lacked `X-Goog-Upload-Status` once the start retry policy is out of budget.
-        #
-        # @param event [Event::HttpResponse] Final headerless `200` initiation response
-        # @return [Event::RequestFailed]
-        #
-        def headerless_start_failure event
-          err = BadResponseError.new "Missing X-Goog-Upload-Status header in start response",
-                                     event.status, headers: event.headers
-          failed_event = Event::RequestFailed.new kind: :retries_exhausted, message: err.message,
-                                                  source_error: err
-          @upload_log.wire_failure failed_event
-          failed_event
+          make_post_request instruction.url, headers: start_headers(instruction), body: instruction.body,
+                            retry_policy: @start_retry_policy.dup.start!,
+                            method_name:  "#{@method_name_prefix}.start"
         end
 
         ##
@@ -645,7 +615,7 @@ module Gapic
           body = @buffer.byteslice slice_index, instruction.length
 
           make_post_request instruction.url, headers: headers, body: body,
-                            retry_policy: @data_plane_retry_policy.dup.start!,
+                            retry_policy: @data_plane_retry_policy.dup.start!, data_plane: true,
                             method_name: "#{@method_name_prefix}.upload"
         end
 
@@ -663,7 +633,7 @@ module Gapic
             "Content-Length"        => "0"
           }
           make_post_request instruction.url, headers: headers, body: "",
-                            retry_policy: @data_plane_retry_policy.dup.start!,
+                            retry_policy: @data_plane_retry_policy.dup.start!, data_plane: true,
                             method_name: "#{@method_name_prefix}.finalize"
         end
 
@@ -697,40 +667,78 @@ module Gapic
 
         ##
         # @private
-        # Dispatches an HTTP POST request through client stub.
+        # Sends an HTTP POST request through the client stub, re-sending it for as long as {RetryDecider} says
+        # so, and converts the final outcome into an event.
+        #
+        # Every attempt is logged. The event for the last attempt is returned unchanged: this method only
+        # chooses whether to send again, never what an outcome means; {Rules} decides that.
         #
         # @param url [String] Target URL
         # @param headers [Hash] Request headers
         # @param body [String] Request body
-        # @param retry_policy [Gapic::Common::RetryPolicy] Command retry policy
+        # @param retry_policy [Gapic::Common::RetryPolicy, nil] Started command retry policy; `nil` sends once
+        # @param data_plane [Boolean] Whether the request transmits upload bytes (`upload`, `finalize`)
         # @param method_name [String, nil] RPC method name for logging
-        # @param start_attempt [Integer] Attempt counter
         # @return [Event::HttpResponse, Event::RequestFailed, Event::GlobalDeadlineExceeded]
         #
-        def make_post_request url, headers:, body:, retry_policy:, method_name: nil, start_attempt: 1
-          return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
+        def make_post_request url, headers:, body:, retry_policy:, data_plane: false, method_name: nil
+          decider = retry_policy && RetryDecider.new(retry_policy, data_plane: data_plane)
+          started_at = monotonic_now
+          attempt = 1
 
-          options = {
-            metadata:     headers,
-            retry_policy: retry_policy,
-            timeout:      request_timeout(retry_policy)
-          }
+          loop do
+            return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
+
+            timeout = request_timeout retry_policy, started_at: started_at
+            outcome = attempt_post_request url, headers: headers, body: body, timeout: timeout,
+                                                method_name: method_name, attempt: attempt
+            # If the global deadline expired during the HTTP call (e.g. Net::HTTP connection or read timeout
+            # triggered by request_timeout reaching 0 at @deadline), emit GlobalDeadlineExceeded rather than
+            # Event::RequestFailed. Otherwise, in states like Recovery where Event::RequestFailed is immediately
+            # terminal, the state machine would raise the underlying transport error instead of DeadlineExceededError.
+            return Event::GlobalDeadlineExceeded.new if outcome.is_a?(Exception) && deadline_exceeded?
+
+            event = outcome_event outcome
+            return event unless decider&.retry?(outcome) && command_budget_left?(retry_policy, started_at)
+
+            attempt += 1
+          end
+        end
+
+        ##
+        # @private
+        # Performs one `ClientStub` call, returning the error it raises instead of raising it.
+        #
+        # @param url [String] Target URL
+        # @param headers [Hash] Request headers
+        # @param body [String] Request body
+        # @param timeout [Numeric] Per-attempt timeout
+        # @param method_name [String, nil] RPC method name for logging
+        # @param attempt [Integer] 1-based attempt number, for logging
+        # @return [Object, StandardError] The client stub response, or the error it raised
+        #
+        def attempt_post_request url, headers:, body:, timeout:, method_name:, attempt:
+          options = { metadata: headers, retry_policy: CLIENT_STUB_NO_RETRY, timeout: timeout }
           @upload_log.wire_send method: "POST", url: url, headers: headers,
-                                start_attempt: start_attempt, body_size: body.to_s.bytesize, body: body
-
-          response = @client_stub.make_post_request uri: url, body: body, params: {},
-                                                    options: options, method_name: method_name
-          event = Event::HttpResponse.new status: response.status, headers: response.headers || {}, body: response.body
-          @upload_log.wire_receive event
-          event
+                                start_attempt: attempt, body_size: body.to_s.bytesize, body: body
+          @client_stub.make_post_request uri: url, body: body, params: {}, options: options, method_name: method_name
         rescue StandardError => e
-          # If the global deadline expired during the HTTP call (e.g. Net::HTTP connection or read timeout
-          # triggered by request_timeout reaching 0 at @deadline), emit GlobalDeadlineExceeded rather than
-          # Event::RequestFailed. Otherwise, in states like Recovery where Event::RequestFailed is immediately
-          # terminal, the state machine would raise the underlying transport error instead of DeadlineExceededError.
-          return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
+          e
+        end
 
-          event = rescue_request_error e
+        ##
+        # @private
+        # Converts one attempt's outcome into an event and logs it.
+        #
+        # @param outcome [Object, StandardError] Client stub response or raised error
+        # @return [Event::HttpResponse, Event::RequestFailed]
+        #
+        def outcome_event outcome
+          event = if outcome.is_a? Exception
+                    rescue_request_error outcome
+                  else
+                    Event::HttpResponse.new status: outcome.status, headers: outcome.headers || {}, body: outcome.body
+                  end
           if event.is_a? Event::HttpResponse
             @upload_log.wire_receive event
           else
@@ -741,26 +749,52 @@ module Gapic
 
         ##
         # @private
+        # Whether the command's own retry budget has time left, checked after the backoff delay.
+        #
+        # `RetryPolicy#deadline` is private, so the budget is measured from when the command started.
+        #
+        # @param retry_policy [Gapic::Common::RetryPolicy] Command retry policy
+        # @param started_at [Numeric] Monotonic time the command started
+        # @return [Boolean]
+        #
+        def command_budget_left? retry_policy, started_at
+          monotonic_now - started_at < retry_policy.timeout
+        end
+
+        ##
+        # @private
+        # Current monotonic clock reading.
+        #
+        # @return [Float]
+        #
+        def monotonic_now
+          Process.clock_gettime Process::CLOCK_MONOTONIC
+        end
+
+        ##
+        # @private
         # Converts client stub transport exceptions into canonical events.
+        #
+        # Classified by {RetryDecider.failure_kind}, the same function that decides how the error is retried.
         #
         # @param err [StandardError] Rescued transport error
         # @return [Event::HttpResponse, Event::RequestFailed]
         #
         def rescue_request_error err
-          case err
-          when Gapic::Rest::DeadlineExceededError
+          return rescue_faraday_error err if err.is_a? Faraday::Error
+
+          case RetryDecider.failure_kind err
+          when :status
+            Event::HttpResponse.new status: err.status_code, headers: err.headers || {}, body: err.message,
+                                    error: err
+          when :timeout
             Event::RequestFailed.new kind: :timeout, message: err.message, source_error: err
-          when Gapic::Rest::Error
-            if err.status_code
-              Event::HttpResponse.new status: err.status_code, headers: err.headers || {}, body: err.message,
-                                      error: err
-            else
-              Event::RequestFailed.new kind: :connection_failed, message: err.message, source_error: err
-            end
-          when Faraday::Error
-            rescue_faraday_error err
-          else
+          when :connection_failed
             Event::RequestFailed.new kind: :connection_failed, message: err.message, source_error: err
+          else
+            # Not a transport error at all, e.g. the authorization middleware failing to refresh a token. Nothing
+            # reached the server, so this is neither a connection failure nor a reason to recover.
+            Event::RequestFailed.new kind: :unknown, message: err.message, source_error: err
           end
         end
 
@@ -772,17 +806,17 @@ module Gapic
         # @return [Event::HttpResponse, Event::RequestFailed]
         #
         def rescue_faraday_error err
-          if err.response && err.response[:status]
-            rest_err = Gapic::Rest::Error.wrap_faraday_error err
+          case RetryDecider.failure_kind err
+          when :status
             Event::HttpResponse.new(
               status:  err.response[:status],
               headers: err.response[:headers] || {},
               body:    err.response[:body],
-              error:   rest_err
+              error:   Gapic::Rest::Error.wrap_faraday_error(err)
             )
-          elsif err.is_a? Faraday::TimeoutError
+          when :timeout
             Event::RequestFailed.new kind: :timeout, message: err.message, source_error: err
-          elsif err.is_a? Faraday::ConnectionFailed
+          when :connection_failed
             Event::RequestFailed.new kind: :connection_failed, message: err.message, source_error: err
           else
             Event::RequestFailed.new kind: :retries_exhausted, message: err.message, source_error: err

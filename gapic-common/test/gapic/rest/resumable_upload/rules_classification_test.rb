@@ -97,37 +97,41 @@ class RulesClassificationTest < Minitest::Test
     end
   end
 
-  def test_classify_http_response_missing_header_non_fatal
-    # HTTP 200 missing header
+  def test_cat2_status_codes_are_the_retriable_sets_plus_the_recoverable_extras
+    expected = (Rules::RETRIABLE_4XX_STATUS_CODES + Rules::RETRIABLE_5XX_STATUS_CODES +
+                [400, 408, 412, 416, 502]).sort
+    assert_equal expected, Rules::CAT2_STATUS_CODES
+    assert_equal [400, 408, 409, 412, 416, 429, 499, 500, 502, 503, 504], Rules::CAT2_STATUS_CODES
+  end
+
+  def test_classify_http_response_headerless_200_is_cat2
     resp_200 = Event::HttpResponse.new status: 200, headers: {}, body: ""
     assert_equal :response_cat2, Rules.classify_http_response(resp_200)
 
-    # Recoverable 4xx missing header
-    Rules::CAT2_STATUS_CODES.each do |code|
-      resp = Event::HttpResponse.new status: code, headers: {}, body: ""
-      assert_equal :response_cat2, Rules.classify_http_response(resp), "Expected #{code} to classify as :response_cat2"
-    end
-
-    # 5xx server/gateway errors missing header
-    [500, 502, 503, 504].each do |code|
-      resp = Event::HttpResponse.new status: code, headers: {}, body: ""
-      assert_equal :response_cat2, Rules.classify_http_response(resp), "Expected #{code} to classify as :response_cat2"
-    end
-
-    # Empty string header
     resp_empty = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "" }, body: ""
     assert_equal :response_cat2, Rules.classify_http_response(resp_empty)
   end
 
-  def test_classify_http_response_missing_header_fatal_status_codes
-    Rules::FATAL_STATUS_CODES.each do |code|
-      resp = Event::HttpResponse.new status: code, headers: {}, body: ""
-      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp),
-                   "Expected fatal code #{code} to classify as :response_fatal_bad_response"
+  # A non-200 without a definitive status header is Category 2 only when its status is listed in
+  # CAT2_STATUS_CODES; missing, empty and `active` headers are treated alike.
+  def test_classify_http_response_non_200_cat2_statuses
+    [{}, { "X-Goog-Upload-Status" => "" }, { "X-Goog-Upload-Status" => "active" }].each do |headers|
+      Rules::CAT2_STATUS_CODES.each do |code|
+        resp = Event::HttpResponse.new status: code, headers: headers, body: ""
+        assert_equal :response_cat2, Rules.classify_http_response(resp),
+                     "Expected #{code} with #{headers.inspect} to classify as :response_cat2"
+      end
+    end
+  end
 
-      resp_empty = Event::HttpResponse.new status: code, headers: { "X-Goog-Upload-Status" => "" }, body: ""
-      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_empty),
-                   "Expected fatal code #{code} with empty header to classify as :response_fatal_bad_response"
+  # The allowlist is load-bearing: any status it does not list is fatal, including ones never seen before.
+  def test_classify_http_response_non_200_unlisted_statuses_are_fatal
+    [{}, { "X-Goog-Upload-Status" => "" }, { "X-Goog-Upload-Status" => "active" }].each do |headers|
+      [301, 401, 403, 404, 405, 410, 413, 415, 418, 501, 505, 599].each do |code|
+        resp = Event::HttpResponse.new status: code, headers: headers, body: ""
+        assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp),
+                     "Expected #{code} with #{headers.inspect} to classify as :response_fatal_bad_response"
+      end
     end
   end
 

@@ -108,21 +108,24 @@ class DriverErrorMappingTest < Minitest::Test
     assert_same err, integration_event.source_error
   end
 
+  # A non-transport error (e.g. a credentials refresh failure) reached no server, so it is neither a
+  # connection failure nor a reason to recover.
   def test_rescue_request_error_standard_error
     err = RuntimeError.new "Unexpected low-level runtime error"
     event = @driver.send :rescue_request_error, err
 
     assert_instance_of Event::RequestFailed, event
-    assert_equal :connection_failed, event.kind
+    assert_equal :unknown, event.kind
     assert_equal "Unexpected low-level runtime error", event.message
     assert_same err, event.source_error
+    assert_equal :request_failed_unknown, Rules.shape_of(event)
 
     # End-to-end via make_post_request
     @client_stub.error_to_raise = err
     integration_event = @driver.send :make_post_request, "https://example.com", headers: {}, body: "",
                                                                                 retry_policy: nil
     assert_instance_of Event::RequestFailed, integration_event
-    assert_equal :connection_failed, integration_event.kind
+    assert_equal :unknown, integration_event.kind
     assert_same err, integration_event.source_error
   end
 
@@ -187,6 +190,22 @@ class DriverErrorMappingTest < Minitest::Test
     assert_instance_of Event::RequestFailed, integration_event
     assert_equal :connection_failed, integration_event.kind
     assert_same err, integration_event.source_error
+  end
+
+  def test_rescue_faraday_error_ssl_error_is_a_connection_failure
+    err = Faraday::SSLError.new "SSL_connect returned=1 errno=0 state=error"
+    event = @driver.send :rescue_faraday_error, err
+
+    assert_instance_of Event::RequestFailed, event
+    assert_equal :connection_failed, event.kind
+    assert_same err, event.source_error
+
+    # End-to-end via make_post_request
+    @client_stub.error_to_raise = err
+    integration_event = @driver.send :make_post_request, "https://example.com", headers: {}, body: "",
+                                                                                retry_policy: nil
+    assert_instance_of Event::RequestFailed, integration_event
+    assert_equal :connection_failed, integration_event.kind
   end
 
   def test_rescue_faraday_error_generic_without_response

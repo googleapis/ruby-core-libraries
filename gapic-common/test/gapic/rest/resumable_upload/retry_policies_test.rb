@@ -16,208 +16,78 @@
 
 require "test_helper"
 require "gapic/rest/resumable_upload"
-require "ostruct"
 require "faraday"
 
 ##
-# Tests for ResumableUpload RetryPolicies and header extraction.
+# Tests for ResumableUpload RetryPolicies defaults and start_retry_policy_for.
 #
 class RetryPoliciesTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
 
   # ============================================================================
-  # SUT: extract_headers
+  # SUT: default policies
   # ============================================================================
 
-  def test_extract_headers_from_headers_method
-    obj = OpenStruct.new headers: { "X-Test-Header" => "value1" }
-    assert_equal({ "X-Test-Header" => "value1" }, RetryPolicies.extract_headers(obj))
+  def test_start_and_control_plane_retry_codes_cover_the_retriable_4xx_and_5xx_statuses
+    # 409, 429, 499, 500, 503, 504 in that order.
+    assert_equal [6, 8, 1, 13, 14, 4], RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES
   end
 
-  def test_extract_headers_from_response_headers_method
-    obj = OpenStruct.new response_headers: { "X-Test-Header" => "value2" }
-    assert_equal({ "X-Test-Header" => "value2" }, RetryPolicies.extract_headers(obj))
+  def test_data_plane_retry_codes_cover_only_the_retriable_5xx_statuses
+    # 500, 503, 504 in that order.
+    assert_equal [13, 14, 4], RetryPolicies::DATA_PLANE_RETRY_CODES
   end
 
-  def test_extract_headers_from_faraday_response_hash
-    err = Faraday::ClientError.new "error message", { headers: { "X-Test-Header" => "value3" } }
-    assert_equal({ "X-Test-Header" => "value3" }, RetryPolicies.extract_headers(err))
+  def test_retry_codes_are_derived_from_the_rules_status_sets
+    expected = (Rules::RETRIABLE_4XX_STATUS_CODES + Rules::RETRIABLE_5XX_STATUS_CODES).map do |status|
+      Gapic::Common::ErrorCodes.grpc_error_for status
+    end
+    assert_equal expected, RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES
   end
 
-  def test_extract_headers_returns_nil_when_no_headers_present
-    assert_nil RetryPolicies.extract_headers(StandardError.new("error"))
-    assert_nil RetryPolicies.extract_headers(nil)
-    assert_nil RetryPolicies.extract_headers(Object.new)
-    assert_nil RetryPolicies.extract_headers("string")
-    assert_nil RetryPolicies.extract_headers({})
+  def test_408_and_502_are_not_retried_by_default
+    unknown = Gapic::Common::ErrorCodes.grpc_error_for 408
+    assert_equal Gapic::Common::ErrorCodes.grpc_error_for(502), unknown
+    refute_includes RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES, unknown
+    refute_includes RetryPolicies::DATA_PLANE_RETRY_CODES, unknown
   end
 
-  # ============================================================================
-  # SUT: RetryPolicies.default_start
-  # ============================================================================
-
-  def test_default_start_missing_status_header_retries_unconditionally
-    policy = RetryPolicies.default_start
-
-    # Retriable code (503) without status header
-    err_503 = OpenStruct.new response_status: 503, headers: { "Content-Type" => "text/plain" }
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without status header (still retries because missing status header is retriable)
-    err_400 = OpenStruct.new response_status: 400, headers: { "Content-Type" => "text/plain" }
-    assert policy.retry_error?(err_400)
-
-    # Status 200 OK without status header
-    resp_200 = OpenStruct.new response_status: 200, headers: { "Content-Type" => "text/plain" }
-    assert policy.retry_error?(resp_200)
-
-    # No status code without status header
-    err_no_code = OpenStruct.new headers: { "Content-Type" => "text/plain" }
-    assert policy.retry_error?(err_no_code)
-
-    # Empty status header string
-    err_empty_status = OpenStruct.new response_status: 400, headers: { "X-Goog-Upload-Status" => "" }
-    assert policy.retry_error?(err_empty_status)
+  def test_default_policies_carry_the_per_plane_codes_and_no_predicate
+    {
+      RetryPolicies.default_start         => RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES,
+      RetryPolicies.default_control_plane => RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES,
+      RetryPolicies.default_data_plane    => RetryPolicies::DATA_PLANE_RETRY_CODES
+    }.each do |policy, codes|
+      assert_equal codes, policy.retry_codes
+      assert_nil policy.retry_predicate
+      assert_in_delta 1.0, policy.initial_delay
+      assert_in_delta 15.0, policy.max_delay
+      assert_in_delta 1.3, policy.multiplier
+    end
   end
 
-  def test_default_start_with_status_header_falls_back_to_codes
-    policy = RetryPolicies.default_start
+  def test_default_start_retries_a_retriable_4xx_but_the_data_plane_does_not
+    err429 = Faraday::ClientError.new "Too Many Requests", { status: 429, headers: {} }
 
-    # Retriable code (503) with status header
-    err_503 = OpenStruct.new response_status: 503, headers: { "X-Goog-Upload-Status" => "active" }
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) with status header
-    err_400 = OpenStruct.new response_status: 400, headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_400)
-
-    # Without status code with status header
-    err_no_code = OpenStruct.new headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_no_code)
+    assert RetryPolicies.default_start.retry_error?(err429)
+    assert RetryPolicies.default_control_plane.retry_error?(err429)
+    refute RetryPolicies.default_data_plane.retry_error?(err429)
   end
 
-  def test_default_start_no_headers_falls_back_to_codes
-    policy = RetryPolicies.default_start
+  def test_default_policies_retry_a_retriable_5xx
+    err503 = Faraday::ServerError.new "Service Unavailable", { status: 503, headers: {} }
 
-    # Retriable code (503) without headers
-    err_503 = OpenStruct.new response_status: 503
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without headers
-    err_400 = OpenStruct.new response_status: 400
-    refute policy.retry_error?(err_400)
-
-    # Without status code and without headers
-    err_no_code = RuntimeError.new "generic network error"
-    refute policy.retry_error?(err_no_code)
+    assert RetryPolicies.default_start.retry_error?(err503)
+    assert RetryPolicies.default_control_plane.retry_error?(err503)
+    assert RetryPolicies.default_data_plane.retry_error?(err503)
   end
 
-  # ============================================================================
-  # SUT: RetryPolicies.default_control_plane
-  # ============================================================================
+  def test_default_policies_do_not_retry_an_error_without_a_status
+    err = RuntimeError.new "generic error"
 
-  def test_default_control_plane_missing_status_header_falls_back_to_codes
-    policy = RetryPolicies.default_control_plane
-
-    # Retriable code (503) without status header
-    err_503 = OpenStruct.new response_status: 503, headers: { "Content-Type" => "text/plain" }
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without status header
-    err_400 = OpenStruct.new response_status: 400, headers: { "Content-Type" => "text/plain" }
-    refute policy.retry_error?(err_400)
-
-    # Without status code without status header
-    err_no_code = OpenStruct.new headers: { "Content-Type" => "text/plain" }
-    refute policy.retry_error?(err_no_code)
-  end
-
-  def test_default_control_plane_with_status_header_falls_back_to_codes
-    policy = RetryPolicies.default_control_plane
-
-    # Retriable code (503) with status header
-    err_503 = OpenStruct.new response_status: 503, headers: { "X-Goog-Upload-Status" => "active" }
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) with status header
-    err_400 = OpenStruct.new response_status: 400, headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_400)
-
-    # Without status code with status header
-    err_no_code = OpenStruct.new headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_no_code)
-  end
-
-  def test_default_control_plane_no_headers_falls_back_to_codes
-    policy = RetryPolicies.default_control_plane
-
-    # Retriable code (503) without headers
-    err_503 = OpenStruct.new response_status: 503
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without headers
-    err_400 = OpenStruct.new response_status: 400
-    refute policy.retry_error?(err_400)
-
-    # Without status code and without headers
-    err_no_code = RuntimeError.new "generic network error"
-    refute policy.retry_error?(err_no_code)
-  end
-
-  # ============================================================================
-  # SUT: RetryPolicies.default_data_plane
-  # ============================================================================
-
-  def test_default_data_plane_missing_status_header_unretriable
-    policy = RetryPolicies.default_data_plane
-
-    # Retriable code (503) without status header (predicate returns false -> unretriable)
-    err_503 = OpenStruct.new response_status: 503, headers: { "Content-Type" => "text/plain" }
-    refute policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without status header
-    err_400 = OpenStruct.new response_status: 400, headers: { "Content-Type" => "text/plain" }
-    refute policy.retry_error?(err_400)
-
-    # Without status code without status header
-    err_no_code = OpenStruct.new headers: { "Content-Type" => "text/plain" }
-    refute policy.retry_error?(err_no_code)
-
-    # Empty status header string
-    err_empty_status = OpenStruct.new response_status: 503, headers: { "X-Goog-Upload-Status" => "" }
-    refute policy.retry_error?(err_empty_status)
-  end
-
-  def test_default_data_plane_with_status_header_falls_back_to_codes
-    policy = RetryPolicies.default_data_plane
-
-    # Retriable code (503) with status header
-    err_503 = OpenStruct.new response_status: 503, headers: { "X-Goog-Upload-Status" => "active" }
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) with status header
-    err_400 = OpenStruct.new response_status: 400, headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_400)
-
-    # Without status code with status header
-    err_no_code = OpenStruct.new headers: { "X-Goog-Upload-Status" => "active" }
-    refute policy.retry_error?(err_no_code)
-  end
-
-  def test_default_data_plane_no_headers_falls_back_to_codes
-    policy = RetryPolicies.default_data_plane
-
-    # Retriable code (503) without headers
-    err_503 = OpenStruct.new response_status: 503
-    assert policy.retry_error?(err_503)
-
-    # Non-retriable code (400) without headers
-    err_400 = OpenStruct.new response_status: 400
-    refute policy.retry_error?(err_400)
-
-    # Without status code and without headers
-    err_no_code = RuntimeError.new "generic network error"
-    refute policy.retry_error?(err_no_code)
+    refute RetryPolicies.default_start.retry_error?(err)
+    refute RetryPolicies.default_control_plane.retry_error?(err)
+    refute RetryPolicies.default_data_plane.retry_error?(err)
   end
 
   # ============================================================================
@@ -262,9 +132,7 @@ class RetryPoliciesTest < Minitest::Test
     assert_equal [Gapic::Common::ErrorCodes::ERROR_STRING_MAPPING["UNAVAILABLE"]], overrides[:retry_codes]
   end
 
-  # Applying the overrides to the initiation defaults must leave the missing-status-header predicate in
-  # place: that is the whole reason the conversion returns a Hash rather than a policy object.
-  def test_start_retry_policy_for_overrides_leave_the_start_predicate_in_place
+  def test_start_retry_policy_for_overrides_keep_the_initiation_retry_codes
     options = Gapic::CallOptions.new timeout: 5, retry_policy: { initial_delay: 0.5 }
     overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
 
@@ -272,7 +140,8 @@ class RetryPoliciesTest < Minitest::Test
 
     assert_equal 0.5, policy.initial_delay
     assert_equal 5, policy.timeout
-    assert_same RetryPolicies::START_PREDICATE, policy.retry_predicate
+    assert_equal RetryPolicies::START_AND_CONTROL_PLANE_RETRY_CODES, policy.retry_codes
+    assert_nil policy.retry_predicate
   end
 
   def test_start_retry_policy_for_rejects_a_proc_retry_policy
@@ -311,7 +180,7 @@ class RetryPoliciesTest < Minitest::Test
     overrides = Gapic::Rest::ResumableUpload.start_retry_policy_for options
     policy = Gapic::Common::RetryPolicy.new(**overrides).apply_defaults RetryPolicies::START_DEFAULTS
 
-    # The caller's predicate replaces the initiation one wholesale; the two are not composed.
+    # The initiation defaults carry no predicate, so the caller's is used as-is.
     assert_same predicate, policy.retry_predicate
   end
 

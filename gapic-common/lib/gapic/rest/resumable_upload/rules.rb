@@ -132,39 +132,51 @@ module Gapic
 
         # Failures are classified into three categories, which the rest of this module is written in terms of:
         #
-        # * **Category 1 (transient transport)** - connection resets, DNS failures, load shedding. Handled
-        #   entirely inside the Driver by `Gapic::Common::RetryPolicy`; Core never sees them. Only their
-        #   exhaustion reaches this module, as `:request_retries_exhausted`.
+        # * **Category 1 (transient transport)** - connection resets, TLS failures, load shedding. Retried inside
+        #   the Driver by {Driver::RetryDecider} for initiation, `query` and `cancel`, and never retried for
+        #   `upload` and `finalize`, where a lost connection leaves the server offset unknown. Whatever the Driver
+        #   does not retry, or stops retrying, reaches this module as a `:request_*` shape.
         # * **Category 2 (recoverable protocol)** - the client offset may be misaligned with the server, or a
         #   proxy stripped the protocol headers. Resolved by querying the server for its acknowledged offset
         #   and realigning, never by blindly retransmitting. Shape: `:response_cat2`.
         # * **Category 3 (terminal)** - structurally invalid, unauthorized, rejected, or out of budget.
         #   Resolved by transitioning to `:error` or `:rejected` and emitting `Instruction::TerminateFailure`.
         #
-        # See `design/resumable_upload/implementation-guide.md` section 6.1 for the full classification.
+        # See `design/resumable_upload/implementation-guide.md` section 6.1 for the full classification, and
+        # `design/resumable_upload/transport-error-retry.md` for which failures the Driver retries.
+
+        ##
+        # @private
+        # 4xx status codes the initiation, `query` and `cancel` retry policies retry by default.
+        #
+        # The data plane never retries a 4xx; see {Driver::RetryDecider}.
+        #
+        # @return [Array<Integer>]
+        RETRIABLE_4XX_STATUS_CODES = [409, 429, 499].freeze
+
+        ##
+        # @private
+        # 5xx status codes every retry policy retries by default.
+        #
+        # @return [Array<Integer>]
+        RETRIABLE_5XX_STATUS_CODES = [500, 503, 504].freeze
 
         ##
         # @private
         # HTTP status codes eligible for Category 2 (recovery) handling.
         #
-        # Descriptive rather than load-bearing: {Rules.classify_http_response} routes any non-fatal status with a
-        # missing or empty `X-Goog-Upload-Status` to `:response_cat2`, so this list does not gate the decision.
-        # It records the codes the upload backend is expected to produce in that situation, and is asserted against
-        # {Rules.classify_http_response} by the classification tests.
+        # Rules.classify_http_response} classifies a non-200 response whose `X-Goog-Upload-Status`
+        # is missing, empty or `active` as `:response_cat2` **only** if its status is listed here, and as
+        # `:response_fatal_bad_response` otherwise. It is an allowlist on purpose: a status nobody anticipated
+        # fails the upload rather than looping it through recovery.
+        #
+        # Every status either retry policy retries by default is listed, so a response the Driver stopped
+        # retrying still recovers. 408 and 502 are listed but not retried by default: neither has a gRPC code
+        # in `Gapic::Common::ErrorCodes`, so neither can be named in `retry_codes`.
         #
         # @return [Array<Integer>]
-        CAT2_STATUS_CODES = [400, 408, 409, 412, 416, 429, 499].freeze
-
-        ##
-        # @private
-        # HTTP status codes that are immediately fatal and non-retriable (Category 3).
-        #
-        # Unlike {CAT2_STATUS_CODES} this list is load-bearing: {Rules.classify_http_response} consults it to decide
-        # between `:response_fatal_bad_response` and `:response_cat2` when the upload status header is absent,
-        # and {RetryPolicies::START_PREDICATE} consults it to refuse retries outright.
-        #
-        # @return [Array<Integer>]
-        FATAL_STATUS_CODES = [401, 403, 404, 405, 410, 413, 415].freeze
+        CAT2_STATUS_CODES = (RETRIABLE_4XX_STATUS_CODES + RETRIABLE_5XX_STATUS_CODES +
+                             [400, 408, 412, 416, 502]).sort.freeze
 
         ##
         # @private
@@ -402,8 +414,8 @@ module Gapic
         # {STATUSES} x {SHAPES} product can be enumerated and asserted directly. {Rules.decide} is the only
         # caller in production code.
         #
-        # Arms are written so that no arm matches a pair another arm also matches, which makes their order
-        # presentational rather than load-bearing — with a single deliberate exception, flagged in place,
+        # Arms are written so that no arm matches a pair another arm also matches, meaning
+        # the order does not matter, with a single deliberate exception, flagged in place,
         # where `enter_recovery` must precede `fail_with_request_error`.
         #
         # @param status [Symbol] Current protocol status, one of {STATUSES}
@@ -1000,6 +1012,18 @@ module Gapic
         # @private
         # Classifies an HTTP response into a canonical response shape.
         #
+        # Shapes are shown without their `response_` prefix.
+        #
+        # | `X-Goog-Upload-Status` | `200`         | in CAT2_STATUS_CODES | any other non-200 |
+        # |------------------------|---------------|----------------|-------------------|
+        # | missing / empty        | `cat2`        | `cat2`         | `fatal_bad_response` |
+        # | `active`               | `active`      | `cat2`         | `fatal_bad_response` |
+        # | `final`                | `final`       | `rejected`     | `rejected`        |
+        # | `cancelled`            | `cancelled`   | `fatal_bad_response` | `fatal_bad_response` |
+        # | any other value        | `fatal_bad_response` | `fatal_bad_response` | `fatal_bad_response` |
+        #
+        # A headerless `200` is Category 2 regardless of {CAT2_STATUS_CODES}.
+        #
         # @param response [Event::HttpResponse] Response event
         # @return [Symbol] Canonical response shape
         def self.classify_http_response response
@@ -1007,20 +1031,27 @@ module Gapic
 
           case status_header
           when "active"
-            response.status == 200 ? :response_active : :response_cat2
+            response.status == 200 ? :response_active : classify_unsuccessful_status(response.status)
           when "final"
             response.status == 200 ? :response_final : :response_rejected
           when "cancelled"
             response.status == 200 ? :response_cancelled : :response_fatal_bad_response
           when nil, ""
-            if FATAL_STATUS_CODES.include? response.status
-              :response_fatal_bad_response
-            else
-              :response_cat2
-            end
+            response.status == 200 ? :response_cat2 : classify_unsuccessful_status(response.status)
           else
             :response_fatal_bad_response
           end
+        end
+
+        ##
+        # @private
+        # Classifies a non-200 status whose upload status header is missing, empty or `active`.
+        #
+        # @param status [Integer] HTTP status code
+        # @return [Symbol] `:response_cat2` if the status is in {CAT2_STATUS_CODES}, else
+        #   `:response_fatal_bad_response`
+        def self.classify_unsuccessful_status status
+          CAT2_STATUS_CODES.include?(status) ? :response_cat2 : :response_fatal_bad_response
         end
 
         ##
