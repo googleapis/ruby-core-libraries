@@ -1,0 +1,142 @@
+# frozen_string_literal: true
+
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+require "integration_helper"
+require "json"
+require "stringio"
+
+##
+# Suite A: Integration tests for non-fatal and fatal errors on session initiation (`start`), driven
+# through ::Gapic::ResumableUpload.
+#
+class ErrorOnStartTest < ShowcaseIntegrationTest
+  PAYLOAD_SIZE = 100
+
+  ##
+  # Initiation is the subject here, so the plane policies are left at the protocol's own defaults and only
+  # the start policy varies. A `nil` start policy means the protocol's default backoff, which is what the
+  # timing assertions measure.
+  #
+  def build_start_error_upload scenario:, scenario_config: {}, start_retry_policy: nil, **overrides
+    build_upload(
+      scenario:                   scenario,
+      scenario_config:            scenario_config,
+      start_retry_policy:         start_retry_policy,
+      control_plane_retry_policy: nil,
+      data_plane_retry_policy:    nil,
+      **overrides
+    )
+  end
+
+  def start_error_args **overrides
+    start_args(stream: StringIO.new(payload(PAYLOAD_SIZE)), upload_size: PAYLOAD_SIZE, **overrides)
+  end
+
+  # A1. Verifies non-fatal transient error (503) on start is retried and upload completes.
+  def test_non_fatal_error_on_start_503
+    upload = build_start_error_upload(
+      scenario:           "non_fatal_error_on_start",
+      scenario_config:    { error_code: 503, failure_count: 1 },
+      start_retry_policy: FAST_RETRY
+    )
+
+    parsed = JSON.parse upload.start(**start_error_args)
+
+    assert_equal PAYLOAD_SIZE, parsed["size"]
+    assert_equal 1, phases.count(:initiating)
+    assert_equal :completed, phases.last
+  end
+
+  # A2. Verifies a 400 on start is not retried: it is outside the default retry codes, and a missing status
+  # header is retried only on a 200.
+  def test_400_on_start_is_not_retried
+    upload = build_start_error_upload(
+      scenario:           "non_fatal_error_on_start",
+      scenario_config:    { error_code: 400, failure_count: 1 },
+      start_retry_policy: FAST_RETRY
+    )
+
+    err = assert_raises Gapic::Rest::ResumableUpload::BadResponseError do
+      upload.start(**start_error_args)
+    end
+
+    assert_equal 400, err.status_code
+    assert_equal 1, @log_output.string.scan('"command":"start"').size
+    refute_includes phases, :uploading
+  end
+
+  # A3. Verifies retry exhaustion on start with high failure count times out within ~3s without uploading.
+  def test_retry_exhaustion_on_start_times_out
+    upload = build_start_error_upload(
+      scenario:        "non_fatal_error_on_start",
+      scenario_config: { error_code: 503, failure_count: 10_000 }
+    )
+
+    t0 = Process.clock_gettime Process::CLOCK_MONOTONIC
+    err = assert_raises Gapic::Common::Error do
+      upload.start(**start_error_args(upload_timeout: 3))
+    end
+    t1 = Process.clock_gettime Process::CLOCK_MONOTONIC
+
+    elapsed = t1 - t0
+    assert_operator elapsed, :>=, 2.5
+    assert_operator elapsed, :<=, 6.0
+    is_expected_error = err.is_a?(Gapic::Rest::ResumableUpload::BadResponseError) ||
+                        err.is_a?(Gapic::Rest::ResumableUpload::DeadlineExceededError)
+    assert is_expected_error, "Expected BadResponseError or DeadlineExceededError, got #{err.class}"
+    refute_includes phases, :uploading
+  end
+
+  # A4. Verifies fatal errors on start (403 and 404) immediately raise BadResponseError in < 0.5s without retrying.
+  def test_fatal_error_on_start_raises_bad_response_immediately
+    [403, 404].each do |code|
+      upload = build_start_error_upload(
+        scenario:        "fatal_error_on_start",
+        scenario_config: { error_code: code }
+      )
+
+      t0 = Process.clock_gettime Process::CLOCK_MONOTONIC
+      err = assert_raises Gapic::Rest::ResumableUpload::BadResponseError do
+        upload.start(**start_error_args)
+      end
+      t1 = Process.clock_gettime Process::CLOCK_MONOTONIC
+
+      elapsed = t1 - t0
+      assert_operator elapsed, :<, 0.5, "Expected failure in < 0.5s for HTTP #{code}, took #{elapsed}s"
+      assert_match(/#{code}/, err.message)
+      refute_includes phases, :uploading
+    end
+  end
+
+  # A5. Verifies sequential executions with fresh client UUIDs remain isolated. Each coordinator carries its
+  # own UUID in the scenario header, so this stays a test of server-side isolation rather than of reuse;
+  # reuse of a single coordinator is covered in the resume suite.
+  def test_sequential_runs_session_isolation
+    2.times do
+      upload = build_start_error_upload(
+        scenario:           "non_fatal_error_on_start",
+        scenario_config:    { error_code: 503, failure_count: 1 },
+        start_retry_policy: FAST_RETRY
+      )
+
+      parsed = JSON.parse upload.start(**start_error_args)
+
+      assert_equal PAYLOAD_SIZE, parsed["size"]
+      assert_equal 1, phases.count(:initiating)
+      assert_equal :completed, phases.last
+    end
+  end
+end
