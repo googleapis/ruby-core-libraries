@@ -60,6 +60,35 @@ class DriverRetryTest < Minitest::Test
     end
   end
 
+  # Retry policy whose budget is a fixed number of retries instead of a wall-clock deadline, so a test
+  # that exhausts it does not race the clock on a slow runner.
+  #
+  # Only the budget changes: `retry_with_deadline?` is the one check both the no-argument `RetryPolicy#call`
+  # and `RetryDecider`'s "ask policy" path consult before retrying. `timeout` stays large so the Driver's
+  # own elapsed-time check (`command_budget_left?`) never ends the loop first. `dup` is overridden because
+  # `RetryPolicy#dup` builds a plain `RetryPolicy`, and the Driver dups the policy before every command.
+  class CountedRetryPolicy < Gapic::Common::RetryPolicy
+    def initialize retries:, **kwargs
+      @retries = retries
+      super(timeout: 60, **kwargs)
+    end
+
+    def dup
+      self.class.new retries: @retries, **overrides.except(:timeout)
+    end
+
+    def start! **kwargs
+      @retries_left = @retries
+      super
+    end
+
+    def retry_with_deadline?
+      return false unless @retries_left.positive?
+      @retries_left -= 1
+      true
+    end
+  end
+
   # ============================================================================
   # Initiation
   # ============================================================================
@@ -74,21 +103,21 @@ class DriverRetryTest < Minitest::Test
   # An exhausted headerless start 200 surfaces as the response itself, which Rules turns into a bad
   # response.
   def test_start_surfaces_an_exhausted_headerless_200_as_a_bad_response
-    stub = FakeClientStub.new Array.new(200) { headerless_200 }
+    stub = FakeClientStub.new Array.new(10) { headerless_200 }
 
     err = assert_raises BadResponseError do
-      run_upload stub, start_retry_policy: FAST.merge(timeout: 0.01)
+      run_upload stub, start_retry_policy: CountedRetryPolicy.new(retries: 3, initial_delay: 0.001, max_delay: 0.002)
     end
 
     assert_equal 200, err.status_code
     assert_match(/X-Goog-Upload-Status: missing/, err.message)
-    assert stub.requests.size > 1
+    assert_equal 4, stub.requests.size
   end
 
   # The missing-header retry is the protocol's, so it must not depend on anything the policy carries.
   def test_start_retries_a_headerless_200_under_a_bare_policy
-    stub = FakeClientStub.new Array.new(200) { headerless_200 }
-    policy = Gapic::Common::RetryPolicy.new initial_delay: 0.001, max_delay: 0.002, timeout: 0.05
+    stub = FakeClientStub.new Array.new(10) { headerless_200 }
+    policy = CountedRetryPolicy.new retries: 3, initial_delay: 0.001, max_delay: 0.002
     assert_empty policy.retry_codes
     assert_nil policy.retry_predicate
 
@@ -96,7 +125,7 @@ class DriverRetryTest < Minitest::Test
       run_upload stub, start_retry_policy: policy
     end
 
-    assert stub.requests.size > 1, "Expected the missing-header retry to survive a bare policy"
+    assert_equal 4, stub.requests.size, "Expected the missing-header retry to survive a bare policy"
   end
 
   def test_start_retries_the_default_retriable_statuses
@@ -146,14 +175,14 @@ class DriverRetryTest < Minitest::Test
   end
 
   def test_start_surfaces_an_exhausted_connection_failure_as_request_failed
-    stub = FakeClientStub.new Array.new(200) { Faraday::ConnectionFailed.new "refused" }
+    stub = FakeClientStub.new Array.new(10) { Faraday::ConnectionFailed.new "refused" }
 
     err = assert_raises RequestFailedError do
-      run_upload stub, start_retry_policy: FAST.merge(timeout: 0.01)
+      run_upload stub, start_retry_policy: CountedRetryPolicy.new(retries: 3, initial_delay: 0.001, max_delay: 0.002)
     end
 
     assert_instance_of Faraday::ConnectionFailed, err.cause
-    assert stub.requests.size > 1
+    assert_equal 4, stub.requests.size
   end
 
   def test_final_non_200_is_never_retried_even_when_the_predicate_says_yes
@@ -329,11 +358,13 @@ class DriverRetryTest < Minitest::Test
     assert timeouts[2] < timeouts[1], "Expected the attempt timeout to shrink: #{timeouts}"
   end
 
+  # Wall-clock by nature: the whole-upload deadline is the Driver's own monotonic clock. The margins leave
+  # ~450 ms for the second attempt to start, so a slow runner cannot end the loop after one request.
   def test_the_global_deadline_ends_a_retry_loop
     stub = FakeClientStub.new Array.new(200) { headerless_200 }
 
     assert_raises DeadlineExceededError do
-      run_upload stub, timeout: 0.05, start_retry_policy: { initial_delay: 0.01, max_delay: 0.01, timeout: 60 }
+      run_upload stub, timeout: 0.5, start_retry_policy: { initial_delay: 0.05, max_delay: 0.05, timeout: 60 }
     end
 
     assert stub.requests.size > 1
