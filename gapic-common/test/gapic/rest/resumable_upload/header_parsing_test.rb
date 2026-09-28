@@ -19,13 +19,14 @@ require "gapic/rest/resumable_upload"
 require "stringio"
 
 ##
-# Tests for strict parsing of the numeric protocol headers `X-Goog-Upload-Size-Received` and
-# `X-Goog-Upload-Chunk-Granularity`.
+# Tests for the protocol headers an `active` answer must carry, and for strict parsing of the numeric ones.
 #
-# * A query answer whose offset is missing or malformed is Category 2 and is re-queried with backoff.
-# * A granularity that is missing, malformed or zero is treated as absent.
+# * A query answer whose `X-Goog-Upload-Size-Received` is missing or malformed is Category 2 and is re-queried
+#   with backoff.
+# * A start answer without `X-Goog-Upload-URL` is Category 2, which is terminal in `:starting`.
+# * An `X-Goog-Upload-Chunk-Granularity` that is missing, malformed or zero is treated as absent.
 #
-# See `design/resumable_upload/implementation-guide.md` sections 4.1, 4.2 and 5.
+# See `design/resumable_upload/implementation-guide.md` sections 4.1, 4.2, 5 and 6.1.2.
 #
 class HeaderParsingTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
@@ -99,12 +100,43 @@ class HeaderParsingTest < Minitest::Test
     end
   end
 
-  # The offset is required only of the query answer. Chunk acknowledgements do not carry it.
-  def test_the_offset_is_not_required_outside_recovery
-    Rules::STATUSES.reject { |status| status == :recovery }.each do |status|
-      assert_equal :response_active, Rules.classify_http_response(query_response(nil), status),
-                   "status #{status.inspect}"
+  # Each status requires only the headers of the command it awaits. Chunk acknowledgements carry neither.
+  def test_no_header_is_required_outside_starting_and_recovery
+    bare_active = Event::HttpResponse.new status: 200, headers: { "x-goog-upload-status" => "active" }
+    (Rules::STATUSES - [:starting, :recovery]).each do |status|
+      assert_equal :response_active, Rules.classify_http_response(bare_active, status), "status #{status.inspect}"
     end
+  end
+
+  # --- X-Goog-Upload-URL on the start answer ---
+
+  def test_start_answer_without_an_upload_url_is_category_2
+    [nil, "", "   "].each do |url|
+      assert_equal :response_cat2, Rules.classify_http_response(start_response(nil, url: url), :starting),
+                   "url #{url.inspect}"
+    end
+    assert_equal :response_active, Rules.classify_http_response(start_response(nil), :starting)
+  end
+
+  def test_start_answer_without_an_upload_url_fails_with_a_bad_response
+    decision = Rules.decide State.new(status: :starting), start_response(nil, url: nil), @config
+
+    assert_equal :fail_with_bad_response, decision.recipe
+    assert_equal :error, decision.next_state.status
+    assert_instance_of BadResponseError, decision.next_state.last_error
+    assert_nil Rules.resume_handle_from(decision.next_state)
+  end
+
+  def test_driver_fails_without_a_resume_handle_when_the_upload_url_is_missing
+    initiation = FakeResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "active" }, body: ""
+    stub = FakeClientStub.new [initiation]
+
+    error = assert_raises BadResponseError do
+      run_upload stub
+    end
+
+    assert_nil error.resume_handle
+    assert_equal ["start"], stub.commands
   end
 
   def test_missing_offset_re_queries_with_backoff_instead_of_realigning
@@ -213,8 +245,9 @@ class HeaderParsingTest < Minitest::Test
               recovery_offset: recovery_offset
   end
 
-  def start_response granularity
-    headers = { "x-goog-upload-status" => "active", "x-goog-upload-url" => SESSION_URL }
+  def start_response granularity, url: SESSION_URL
+    headers = { "x-goog-upload-status" => "active" }
+    headers["x-goog-upload-url"] = url unless url.nil?
     headers["x-goog-upload-chunk-granularity"] = granularity unless granularity.nil?
     Event::HttpResponse.new status: 200, headers: headers
   end

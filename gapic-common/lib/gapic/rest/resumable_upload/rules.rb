@@ -1103,16 +1103,22 @@ module Gapic
         # @private
         # Whether a `200` `active` response carries the headers the command it answers needs to be acted on.
         #
+        # * `start` (awaited in `:starting`): `X-Goog-Upload-URL` must be present and non-blank. Without it there
+        #   is no session to upload to.
         # * `query` (awaited in `:recovery`): `X-Goog-Upload-Size-Received` must parse as a non-negative integer.
         #   Treating a missing or malformed offset as `0` would silently restart the upload.
         #
         # A response that fails this check is Category 2, like a response with no upload status header at all.
+        # {Rules.route} then decides per status: `:starting` fails with {BadResponseError}, `:recovery`
+        # re-queries.
         #
         # @param response [Event::HttpResponse] Response event
         # @param state_status [Symbol] Status of the state the response arrives in
         # @return [Boolean]
         def self.required_headers_present? response, state_status
           case state_status
+          when :starting
+            !header_value(response.headers, "x-goog-upload-url").to_s.strip.empty?
           when :recovery
             !parse_header_non_negative_integer(header_value(response.headers, "x-goog-upload-size-received")).nil?
           else
