@@ -117,7 +117,9 @@ module Gapic
       # * `[:starting, :response_cat2]` fails instead of recovering, unlike the same shape during transmission
       #   and finalizing. There is no upload to recover to until initiation yields an upload URL.
       # * `recovery` re-queries on `:response_cat2` with no attempt cap. Termination is guaranteed only by the
-      #   global deadline the Driver enforces, not by anything in this module.
+      #   global deadline the Driver enforces, not by anything in this module. Re-queries are spaced by the
+      #   recovery episode's backoff, tracked in {State#recovery_offset} and signalled through
+      #   {Instruction::SendQuery#backoff}; see `design/resumable_upload/implementation-guide.md` section 6.2.1.
       #
       # See `design/resumable_upload/implementation-guide.md` section 4 for the transition specification and
       # section 6.1 for the error category taxonomy this module implements.
@@ -143,7 +145,7 @@ module Gapic
         #   Resolved by transitioning to `:error` or `:rejected` and emitting `Instruction::TerminateFailure`.
         #
         # See `design/resumable_upload/implementation-guide.md` section 6.1 for the full classification, and
-        # `design/resumable_upload/transport-error-retry.md` for which failures the Driver retries.
+        # section 6.1.1 for which failures the Driver retries.
 
         ##
         # @private
@@ -165,7 +167,7 @@ module Gapic
         # @private
         # HTTP status codes eligible for Category 2 (recovery) handling.
         #
-        # Rules.classify_http_response} classifies a non-200 response whose `X-Goog-Upload-Status`
+        # {Rules.classify_http_response} classifies a non-200 response whose `X-Goog-Upload-Status`
         # is missing, empty or `active` as `:response_cat2` **only** if its status is listed here, and as
         # `:response_fatal_bad_response` otherwise. It is an allowlist on purpose: a status nobody anticipated
         # fails the upload rather than looping it through recovery.
@@ -537,16 +539,19 @@ module Gapic
         # @private
         # Resumes an existing upload session by transitioning to recovery and querying backend offset.
         #
+        # Opens a recovery episode at offset 0, so the first query is sent at once.
+        #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
         # @param config [ResumeUploadConfig] Resume session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.resume_session state, _event, config
           next_state = state.with(
-            status:     :recovery,
-            upload_url: config.upload_url,
-            chunk_size: config.chunk_size,
-            offset:     0
+            status:          :recovery,
+            upload_url:      config.upload_url,
+            chunk_size:      config.chunk_size,
+            offset:          0,
+            recovery_offset: 0
           )
           progress = Progress.new(
             phase:          :initiating,
@@ -664,6 +669,8 @@ module Gapic
         # @private
         # Acknowledges transmitted chunk and advances offset.
         #
+        # Closes any open recovery episode: the server acknowledged a data command.
+        #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
         # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
@@ -673,7 +680,8 @@ module Gapic
           next_state = state.with(
             status:           :transmission_reading,
             offset:           new_offset,
-            in_flight_length: 0
+            in_flight_length: 0,
+            recovery_offset:  nil
           )
           progress = Progress.new phase: :uploading, bytes_uploaded: new_offset, total_bytes: config.upload_size
           instructions = [
@@ -688,26 +696,33 @@ module Gapic
         # @private
         # Transitions to recovery state to query backend byte offset.
         #
+        # Opens a recovery episode at the current offset and queries at once, unless an episode is already
+        # open. An open episode means the server has confirmed no new bytes since the previous recovery (an
+        # upload keeps failing while the query keeps answering `active`), so the query waits for the episode's
+        # next backoff delay instead.
+        #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
         # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.enter_recovery state, _event, config
+          episode_open = !state.recovery_offset.nil?
           next_state = state.with(
             status:           :recovery,
-            in_flight_length: 0
+            in_flight_length: 0,
+            recovery_offset:  episode_open ? state.recovery_offset : state.offset
           )
           progress = Progress.new phase: :recovering, bytes_uploaded: next_state.offset, total_bytes: config.upload_size
           instructions = [
             Instruction::NotifyProgress.new(progress: progress),
-            Instruction::SendQuery.new(url: state.upload_url)
+            Instruction::SendQuery.new(url: state.upload_url, backoff: episode_open)
           ]
           [next_state, instructions]
         end
 
         ##
         # @private
-        # Retries offset query during recovery.
+        # Retries offset query during recovery, after the open recovery episode's next backoff delay.
         #
         # @param state [State] Current state
         # @param _event [Object] Dispatched event
@@ -718,7 +733,7 @@ module Gapic
             status:           :recovery,
             in_flight_length: 0
           )
-          [next_state, [Instruction::SendQuery.new(url: state.upload_url)]]
+          [next_state, [Instruction::SendQuery.new(url: state.upload_url, backoff: true)]]
         end
 
         ##
@@ -772,6 +787,11 @@ module Gapic
         # @private
         # Realigns buffer and resumes transmission from recovered offset.
         #
+        # Closes the open recovery episode only if the server confirmed bytes beyond the offset the episode
+        # began at. Otherwise the episode stays open: the command that failed has not yet been re-sent
+        # successfully, and if it fails again the next query must keep backing off. {Rules.ack_chunk} closes
+        # the episode once the re-sent command succeeds.
+        #
         # @param state [State] Current state
         # @param event [Event::HttpResponse] Query response containing acknowledged offset
         # @param config [StartUploadConfig, ResumeUploadConfig] Session configuration
@@ -779,10 +799,14 @@ module Gapic
         def self.realign_from_recovery state, event, config
           server_offset_str = header_value event.headers, "x-goog-upload-size-received"
           server_offset = server_offset_str.to_i
+          # `>`, not `!=`: a lower offset is a regression, not progress. Closing on it would reset the backoff,
+          # and a server whose reported offset flips between two values would then query with no delay forever.
+          progressed = state.recovery_offset.nil? || server_offset > state.recovery_offset
           next_state = state.with(
             status:           :transmission_reading,
             offset:           server_offset,
-            in_flight_length: 0
+            in_flight_length: 0,
+            recovery_offset:  progressed ? nil : state.recovery_offset
           )
           progress = Progress.new phase: :uploading, bytes_uploaded: server_offset, total_bytes: config.upload_size
           instructions = [

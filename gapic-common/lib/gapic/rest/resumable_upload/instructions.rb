@@ -100,18 +100,26 @@ module Gapic
         # @private
         # Query backend for current acknowledged offset.
         #
+        # Every query belongs to a recovery episode (see {State#recovery_offset}). The Driver keeps one
+        # `Gapic::Common::RetryPolicy` per episode and uses it both between attempts of a single query and
+        # between queries, so the delay grows across the whole episode instead of restarting per command.
+        #
         # @!attribute [r] url
         #   @return [String] Session upload URL
+        # @!attribute [r] backoff
+        #   @return [Boolean] `false` to open a new recovery episode and send at once; `true` to continue the
+        #     open episode, waiting for its next backoff delay before sending
         #
-        SendQuery = Data.define :url do
+        SendQuery = Data.define :url, :backoff do
           ##
           # @private
           # Initializes a SendQuery instruction.
           #
           # @param url [String] Session upload URL
+          # @param backoff [Boolean] Whether to continue the open recovery episode after its next backoff delay
           #
-          def initialize url:
-            super url: url
+          def initialize url:, backoff: false
+            super url: url, backoff: backoff
           end
         end
 

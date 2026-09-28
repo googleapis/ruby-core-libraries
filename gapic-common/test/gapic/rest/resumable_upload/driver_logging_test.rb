@@ -174,6 +174,35 @@ class DriverLoggingTest < Minitest::Test
     assert_includes info_recipes, "realign_from_recovery"
   end
 
+  def test_recovery_re_query_logs_the_backoff_delay
+    recording = RecordingLogger.new
+    responses = [
+      FakeResponse.new(200, { "X-Goog-Upload-Status" => "active",
+                              "X-Goog-Upload-URL"    => "https://storage.googleapis.com/session?id=123" }, ""),
+      Faraday::ConnectionFailed.new("reset"),
+      FakeResponse.new(502, {}, "Bad Gateway"),
+      FakeResponse.new(200, { "X-Goog-Upload-Status" => "active", "X-Goog-Upload-Size-Received" => "0" }, ""),
+      FakeResponse.new(200, { "X-Goog-Upload-Status" => "final" }, "done")
+    ]
+    config = StartUploadConfig.new(
+      initial_url:                "https://storage.googleapis.com/upload",
+      stream:                     StringIO.new("hello world"),
+      upload_size:                11,
+      chunk_size:                 256,
+      control_plane_retry_policy: { initial_delay: 0.25, jitter: 0 }
+    )
+
+    Kernel.stub :sleep, nil do
+      Driver.new(client_stub: FakeStub.new(responses), config: config, logger: recording).run
+    end
+
+    backoff_entries = recording.entries.select { |e| e.message.message == "Backing off before recovery query" }
+    assert_equal 1, backoff_entries.size
+    assert_equal Logger::DEBUG, backoff_entries.first.severity
+    assert_in_delta 0.25, backoff_entries.first.message.fields["delay"]
+    assert_equal 1, backoff_entries.first.message.fields["backoffAttempt"]
+  end
+
   def test_resume_upload_logs_resume_session_entry
     recording = RecordingLogger.new
     responses = [

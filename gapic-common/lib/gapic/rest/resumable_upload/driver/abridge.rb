@@ -138,7 +138,7 @@ module Gapic
             when Instruction::SendFinalize
               { "type" => "SendFinalize", "url" => url(instruction.url) }
             when Instruction::SendQuery
-              { "type" => "SendQuery", "url" => url(instruction.url) }
+              { "type" => "SendQuery", "url" => url(instruction.url), "backoff" => instruction.backoff }
             when Instruction::SendCancel
               { "type" => "SendCancel", "url" => url(instruction.url) }
             when Instruction::RealignBuffer

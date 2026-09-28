@@ -58,7 +58,7 @@ module Gapic
         # Row 2 is inert for timeouts until attempts get their own timeouts: each attempt currently receives the
         # whole remaining command budget, so a timed-out attempt leaves none to retry with.
         #
-        # See `design/resumable_upload/transport-error-retry.md`.
+        # See `design/resumable_upload/implementation-guide.md` section 6.1.1.
         #
         class RetryDecider
           ##

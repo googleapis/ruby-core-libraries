@@ -170,11 +170,13 @@ class DriverTest < Minitest::Test
     ]
     stub = FakeClientStub.new responses
     config = ResumeUploadConfig.new(
-      upload_url:  "https://example.com/session/1",
-      chunk_size:  4,
-      stream:      StringIO.new("0123456789"),
-      upload_size: 10,
-      on_progress: ->(p) { progress_records << p }
+      upload_url:                 "https://example.com/session/1",
+      chunk_size:                 4,
+      stream:                     StringIO.new("0123456789"),
+      upload_size:                10,
+      on_progress:                ->(p) { progress_records << p },
+      # The re-query backs off on the control plane policy; keep the delay negligible.
+      control_plane_retry_policy: { initial_delay: 0.001, max_delay: 0.002, jitter: 0 }
     )
 
     driver = Driver.new client_stub: stub, config: config

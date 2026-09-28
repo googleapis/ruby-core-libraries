@@ -198,7 +198,8 @@ module Gapic
         :chunk_size,         # [Integer] Resolved effective chunk size
         :chunk_granularity,  # [Integer, nil] Alignment modulus returned by server
         :in_flight_length,   # [Integer] Byte length of in-flight chunk currently being transmitted
-        :last_error          # [StandardError, nil] Terminal exception
+        :last_error,         # [StandardError, nil] Terminal exception
+        :recovery_offset     # [Integer, nil] Offset the open recovery episode began at; nil if none (Section 6.2.1)
       ) do
       end
 
@@ -245,7 +246,7 @@ end
 *   `Instruction::SendStart.new(url:, headers:, body:)`: Execute initiation request to establish upload session.
 *   `Instruction::SendChunk.new(url:, offset:, length:, finalize:)`: Transmit buffered chunk of specified `length` starting at `offset`. If `finalize` is true, sends command `upload, finalize`.
 *   `Instruction::SendFinalize.new(url:)`: Send standalone `finalize` command when all data bytes were already acknowledged.
-*   `Instruction::SendQuery.new(url:)`: Query backend for current acknowledged offset (`query` command).
+*   `Instruction::SendQuery.new(url:, backoff: false)`: Query backend for current acknowledged offset (`query` command). `backoff: false` opens a new recovery episode and sends at once; `backoff: true` continues the open episode and waits for its next backoff delay first (Section 6.2.1).
 *   `Instruction::SendCancel.new(url:)`: Cancel upload session on server (`cancel` command).
 *   `Instruction::RealignBuffer.new(server_offset:)`: Realign Driver in-memory buffer and stream position to match `server_offset`.
 *   `Instruction::FillBuffer.new(target_bytesize:)`: Read from stream until in-memory buffer reaches `target_bytesize` bytes or stream encounters EOF.
@@ -253,7 +254,7 @@ end
 *   `Instruction::TerminateSuccess.new(response:)`: Upload finalized cleanly; Driver returns `response.body`.
 *   `Instruction::TerminateFailure.new(error:)`: Raise terminal exception.
 
-### 2.5 Driver Buffer Invariants & Stream Position Model
+### 2.7 Driver Buffer Invariants & Stream Position Model
 
 The Driver coordinates stream reading and in-memory buffering using four explicit offset markers:
 *   `server_offset`: Contiguous byte count acknowledged by the server (extracted from `X-Goog-Upload-Size-Received`).
@@ -354,7 +355,7 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
 | From State | Event Shape | Event & Input Payload | State Mutations | To State | Emitted Instructions & Parameters |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`Initializing`** | `:start_upload` | `Event::StartUpload` | `status = :starting` | `Starting` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :initiating, bytes_uploaded: 0, total_bytes: config.upload_size))`<br/>`Instruction::SendStart.new(url: config.initial_url, headers: config.initial_headers, body: config.initial_body)` |
-| **`Initializing`** | `:resume_upload` | `Event::ResumeUpload` | `upload_url = event.upload_url`<br/>`chunk_size = event.chunk_size`<br/>`offset = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :initiating, bytes_uploaded: 0, total_bytes: event.upload_size))`<br/>`Instruction::SendQuery.new(url: event.upload_url)` |
+| **`Initializing`** | `:resume_upload` | `Event::ResumeUpload` | `upload_url = event.upload_url`<br/>`chunk_size = event.chunk_size`<br/>`offset = 0`<br/>`recovery_offset = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :initiating, bytes_uploaded: 0, total_bytes: event.upload_size))`<br/>`Instruction::SendQuery.new(url: event.upload_url, backoff: false)` |
 | **`Starting`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `upload_url = headers['X-Goog-Upload-URL']`<br/>`chunk_granularity = headers['...-Granularity']&.to_i`<br/>`chunk_size = resolve(config, chunk_granularity)`<br/>`offset = 0`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: 0, total_bytes: config.upload_size))`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
 | **`Starting`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, _)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Starting`** | `:response_cat2` / `:response_fatal_bad_response` | `Event::HttpResponse` (Non-200, or a headerless `200` after the start budget is spent; see Section 6.1) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
@@ -362,27 +363,27 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
 | **`Transmission \| Reading from stream`** | `:chunk_read_full` | `Event::ChunkRead(bytes_buffered, eof: false)` | `in_flight_length = event.bytes_buffered`<br/>`status = :transmission_sending` | `Transmission \| Sending` | `Instruction::SendChunk.new(url: state.upload_url, offset: state.offset, length: event.bytes_buffered, finalize: false)` |
 | **`Transmission \| Reading from stream`** | `:chunk_read_eof_with_data` | `Event::ChunkRead(bytes_buffered, eof: true)` where `bytes_buffered > 0` | `in_flight_length = event.bytes_buffered`<br/>`status = :finalizing_sending_upload` | `Finalizing \| Sending with upload` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :finalizing, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendChunk.new(url: state.upload_url, offset: state.offset, length: event.bytes_buffered, finalize: true)` |
 | **`Transmission \| Reading from stream`** | `:chunk_read_eof_empty` | `Event::ChunkRead(bytes_buffered: 0, eof: true)` | `in_flight_length = 0`<br/>`status = :finalizing_sending_finalize` | `Finalizing \| Sending finalize` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :finalizing, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendFinalize.new(url: state.upload_url)` |
-| **`Transmission \| Sending`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = state.offset + state.in_flight_length`<br/>`in_flight_length = 0`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
-| **`Transmission \| Sending`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `in_flight_length = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
-| **`Transmission \| Sending`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `in_flight_length = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
+| **`Transmission \| Sending`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = state.offset + state.in_flight_length`<br/>`in_flight_length = 0`<br/>`recovery_offset = nil`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
+| **`Transmission \| Sending`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `in_flight_length = 0`<br/>`recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
+| **`Transmission \| Sending`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `in_flight_length = 0`<br/>`recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
 | **`Transmission \| Sending`** | `:request_retries_exhausted` / `:request_failed_unknown` | `Event::RequestFailed(kind: :retries_exhausted \| :unknown)` | `in_flight_length = 0`<br/>`last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Transmission \| Sending`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, _)` with `Status: final` | `in_flight_length = 0`<br/>`status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Transmission \| Sending`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `in_flight_length = 0`<br/>`last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
 | **`Finalizing \| Sending with upload`** | `:response_final` | `Event::HttpResponse(200, headers, body)` with `Status: final` | `offset = state.offset + state.in_flight_length`<br/>`in_flight_length = 0`<br/>`status = :success` | `Success` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :completed, bytes_uploaded: state.offset, total_bytes: state.offset))`<br/>`Instruction::TerminateSuccess.new(response: event)` |
-| **`Finalizing \| Sending with upload`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `in_flight_length = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
-| **`Finalizing \| Sending with upload`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `in_flight_length = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
+| **`Finalizing \| Sending with upload`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `in_flight_length = 0`<br/>`recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
+| **`Finalizing \| Sending with upload`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `in_flight_length = 0`<br/>`recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
 | **`Finalizing \| Sending with upload`** | `:request_retries_exhausted` / `:request_failed_unknown` | `Event::RequestFailed(kind: :retries_exhausted \| :unknown)` | `in_flight_length = 0`<br/>`last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Finalizing \| Sending with upload`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, body)` with `Status: final` | `in_flight_length = 0`<br/>`status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Finalizing \| Sending with upload`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `in_flight_length = 0`<br/>`last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
 | **`Finalizing \| Sending finalize`** | `:response_final` | `Event::HttpResponse(200, headers, body)` with `Status: final` | `status = :success` | `Success` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :completed, bytes_uploaded: state.offset, total_bytes: state.offset))`<br/>`Instruction::TerminateSuccess.new(response: event)` |
-| **`Finalizing \| Sending finalize`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
-| **`Finalizing \| Sending finalize`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url)` |
+| **`Finalizing \| Sending finalize`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
+| **`Finalizing \| Sending finalize`** | `:request_connection_failed` / `:request_timeout` | `Event::RequestFailed(kind: :connection_failed \| :timeout)` | `recovery_offset = state.recovery_offset || state.offset`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :recovering, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::SendQuery.new(url: state.upload_url, backoff: !state.recovery_offset.nil?)` |
 | **`Finalizing \| Sending finalize`** | `:request_retries_exhausted` / `:request_failed_unknown` | `Event::RequestFailed(kind: :retries_exhausted \| :unknown)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Finalizing \| Sending finalize`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, body)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Finalizing \| Sending finalize`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
-| **`Recovery`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = headers['X-Goog-Upload-Size-Received'].to_i`<br/>`in_flight_length = 0`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
+| **`Recovery`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = headers['X-Goog-Upload-Size-Received'].to_i`<br/>`in_flight_length = 0`<br/>`recovery_offset = nil` if the new `offset` exceeds `state.recovery_offset`, else unchanged<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
 | **`Recovery`** | `:response_final` | `Event::HttpResponse(200, headers, body)` with `Status: final` | `in_flight_length = 0`<br/>`status = :success` | `Success` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :completed, bytes_uploaded: state.offset, total_bytes: state.offset))`<br/>`Instruction::TerminateSuccess.new(response: event)` |
-| **`Recovery`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `status = :recovery` | `Recovery` | `Instruction::SendQuery.new(url: state.upload_url)` |
+| **`Recovery`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `status = :recovery` | `Recovery` | `Instruction::SendQuery.new(url: state.upload_url, backoff: true)` |
 | **`Recovery`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` / `:request_failed_unknown` | `Event::RequestFailed(kind:, ...)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Recovery`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, body)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Recovery`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
@@ -532,10 +533,10 @@ The implementation distinguishes three categories of network and protocol-level 
 *   **Data Plane Transport Failures**: `:request_connection_failed` and `:request_timeout` during `Transmission` or `Finalizing` also enter `Recovery` (`enter_recovery`), because the Driver does not re-send them on the data plane (Section 6.1.1, rows 2–3).
 *   **Where Category 2 Arrives, per Plane**:
     *   *Session Initiation (`start`)*: a headerless `200` and the default-retriable statuses are re-sent by the Driver within the start budget. Whatever surfaces as `:response_cat2` is terminal in `Starting` (`fail_with_bad_response` → `BadResponseError`, status `200` for an exhausted headerless answer): there is no upload URL to query yet.
-    *   *Session Control (`query`, `cancel`)*: same re-sends as `start`. A `:response_cat2` that surfaces in `Recovery` re-queries (`retry_recovery`), bounded by the global deadline; in `Cancelling` it is terminal.
+    *   *Session Control (`query`, `cancel`)*: same re-sends as `start`. A `:response_cat2` that surfaces in `Recovery` re-queries (`retry_recovery`) after the recovery episode's next backoff delay, bounded by the global deadline (Section 6.2.1); in `Cancelling` it is terminal.
     *   *Data Plane (`upload`, `upload, finalize`, standalone `finalize`)*: a headerless `200` and every `4xx` surface at once; `500`/`503`/`504` are re-sent optimistically within the data budget (the worst case is a server answer that is itself Category 2). Whatever surfaces as `:response_cat2` enters `Recovery` rather than re-transmitting data blindly.
 *   *Why Headers Go Missing*: Intermediate proxies, reverse-proxies, or Google Front End (GFE) edge proxies can strip the protocol response headers or return raw HTML/text error pages on failure.
-*   **Resolution**: Core transitions to `Recovery` and emits `Instruction::SendQuery.new(url: state.upload_url)` to obtain `server_offset`.
+*   **Resolution**: Core transitions to `Recovery` and emits `Instruction::SendQuery` to obtain `server_offset`, opening or continuing a recovery episode (Section 6.2.1).
 
 #### 6.1.3 Category 3: Terminal Failures
 *   **Definition**: Irrecoverable errors where either the request is structurally invalid or unauthorized, the retry budget is spent on a plane that cannot recover, an unseekable rewind is needed, or the server has explicitly aborted/rejected the session.
@@ -598,6 +599,19 @@ To realign the upload state, the `Driver` processes `Instruction::RealignBuffer(
     *   If unseekable: reads and discards `server_offset - current_stream_pos` bytes from `stream`. If the stream encounters unexpected EOF before reaching `server_offset`, Driver raises terminal `StreamMismatchError` with `resume_handle`.
     *   The Driver sets `buffer_start_offset = server_offset`.
 
+#### 6.2.1 Recovery Episodes and Backoff
+A **recovery episode** is the run of consecutive recovery attempts during which the server-confirmed offset does not advance. Without one, recovery could query back-to-back with no delay: a Category 2 status the control plane `retry_codes` do not cover (`400`, `408`, `412`, `416`, `502`) surfaces after one attempt and `retry_recovery` re-queries at once, and an upload that keeps failing while the query keeps answering `active` loops `upload` → `query` → `upload` re-transmitting a chunk per lap.
+
+*   **Rules** track the episode in `State#recovery_offset` (the confirmed offset it began at, `nil` when none is open):
+    *   `resume_session` opens one at `0`; `enter_recovery` opens one at `state.offset` if none is open, and otherwise continues it.
+    *   `realign_from_recovery` closes it only if the reported offset exceeds `recovery_offset`; `ack_chunk` always closes it.
+    *   The first query of an episode carries `backoff: false`; `retry_recovery` and a continuing `enter_recovery` carry `backoff: true`.
+*   **Driver** keeps one `Gapic::Common::RetryPolicy` per episode (`@recovery_policy`, a started `dup` of the control plane policy):
+    *   `backoff: false` starts a fresh one; `backoff: true` calls `perform_delay!` on it before sending (after checking the global deadline).
+    *   The same instance is passed to `make_post_request`, so `RetryDecider`'s in-command retries and the re-queries `Rules` decide on advance one delay sequence: `initial_delay`, × `multiplier`, capped at `max_delay`.
+    *   `perform_delay!` rather than `RetryPolicy#call`: `call` stops sleeping once the policy deadline has passed. After that, recovery queries once per `max_delay` until the global deadline.
+*   **Budget**: the control plane `timeout` budgets the whole episode, not each query. Once it is spent, a transport failure on `query` is no longer re-sent and ends the run through `fail_with_request_error` (resumable).
+
 ### 6.3 Sensible Defaults for Global Deadline
 Every upload session executed via `Driver#run` must have a finite, guaranteed upper bound on total wall-clock execution time. Without a mandatory global deadline, a session encountering repeated Category 2 protocol recoveries or intermittent network stalls could hang indefinitely.
 
@@ -623,7 +637,7 @@ remaining = [@deadline - monotonic_now, 0].max
 elapsed = monotonic_now - started_at
 timeout = retry_policy&.timeout ? (retry_policy.timeout - elapsed).clamp(0, remaining) : remaining
 ```
-This timeout is passed in `options[:timeout]` and shrinks with every attempt. After each backoff delay the loop also checks that the command budget has time left, and it checks the global deadline before every attempt and after every failed one, emitting `Event::GlobalDeadlineExceeded` instead of a transport failure once the deadline has passed.
+This timeout is passed in `options[:timeout]` and shrinks with every attempt. For `query`, `retry_policy` is the recovery episode's policy (Section 6.2.1): its deadline, checked by `RetryDecider`, runs from episode start, while `started_at` here is still the start of the current command. After each backoff delay the loop also checks that the command budget has time left, and it checks the global deadline before every attempt and after every failed one, emitting `Event::GlobalDeadlineExceeded` instead of a transport failure once the deadline has passed.
 
 Per-attempt timeouts shorter than the command budget are out of scope for now; they arrive in the timeout pass done alongside stall control, and are what will make row 2 of Section 6.1.1 effective.
 
@@ -657,6 +671,7 @@ The `Driver` emits structured logs across three severity levels (`INFO`, `DEBUG`
 | `DEBUG` | Wire | Inbound HTTP response (`wire_receive`) | `Received HTTP <status>` |
 | `DEBUG` | Wire | Transport exception (`wire_failure`) | `Request failed: <kind>` |
 | `DEBUG` | Buffer | Stream/buffer realignment (`buffer_realign`) | `Buffer realignment: <action>` |
+| `DEBUG` | Recovery | Backoff before a query that continues a recovery episode (`recovery_backoff`) | `Backing off before recovery query` |
 | `WARN` | Lifecycle | `:fail_with_deadline_exceeded`, `:fail_with_rejected`, `:fail_with_bad_response`, `:fail_with_request_error` | Resumable upload failed |
 | `WARN` | Lifecycle | `:fail_with_cancelled` | Resumable upload canceled on the server |
 | `WARN` | Transition | `InvalidTransitionError` (`unmatched_transition`) | Unmatched transition |
@@ -677,6 +692,7 @@ All log entries emitted by `UploadLog` populate structured fields in `Google::Lo
     *   `recipe`: Transition recipe method symbol executed by `Rules`.
     *   `offset`: Current server-confirmed byte offset (`Integer`).
     *   `inFlightLength`: Byte length of the chunk currently in flight (`Integer`).
+    *   `recoveryOffset`: Offset the open recovery episode began at, or `nil` (`Integer`, on decisions).
     *   `instructions`: Array of abridged instruction hashes emitted by the transition.
     *   `uploadSize`: Total expected upload size in bytes from `config.upload_size` (on `:start_session`).
     *   `requestedChunkSize`: Configured chunk size in bytes from `config.chunk_size` (on `:start_session`).
@@ -701,6 +717,9 @@ All log entries emitted by `UploadLog` populate structured fields in `Google::Lo
     *   `granularity`: Parsed integer value of `X-Goog-Upload-Chunk-Granularity` response header (`wire_receive`).
     *   `kind`: Transport failure classification symbol (`:timeout`, `:connection_failed`, `:retries_exhausted`, `:unknown`).
     *   `error`: Exception message string (`wire_failure`).
+*   **Recovery Backoff Fields** (`recovery_backoff`):
+    *   `delay`: Base delay in seconds about to be performed, before jitter and the `max_delay` cap.
+    *   `backoffAttempt`: 1-based index of the delay within the recovery episode, counting in-command retries.
 *   **Buffer Realignment Fields**:
     *   `action`: Realignment strategy string (`"within_buffer"`, `"rewind"`, or `"fast_forward"`).
     *   `serverOffset`: Target byte offset reported by the server (`Integer`).

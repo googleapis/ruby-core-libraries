@@ -110,6 +110,8 @@ module Gapic
   # * Data plane requests are never re-sent after an outcome that leaves the server offset unknown — a
   #   timeout, a connection failure, a missing status header, or any `4xx`. The upload re-queries the
   #   session and resumes from the offset the server reports instead.
+  # * Consecutive recovery attempts that make no progress back off on a single schedule, with the same
+  #   delays as above; the schedule starts over once the server confirms new bytes.
   # * A response carrying `X-Goog-Upload-Status: final` is never retried.
   #
   class ResumableUpload

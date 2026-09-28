@@ -329,6 +329,11 @@ module Gapic
       #   @return [Integer] Byte length of in-flight chunk currently being transmitted
       # @!attribute [r] last_error
       #   @return [StandardError, nil] Terminal exception if in an error or rejected status
+      # @!attribute [r] recovery_offset
+      #   @return [Integer, nil] Server-confirmed offset when the open recovery episode began, or `nil` when no
+      #     episode is open. A recovery episode is the run of consecutive recovery attempts during which the
+      #     confirmed offset does not advance; every query in it after the first waits for the next backoff delay.
+      #     See `design/resumable_upload/implementation-guide.md` section 6.2.1.
       #
       State = Data.define(
         :status,
@@ -337,7 +342,8 @@ module Gapic
         :chunk_size,
         :chunk_granularity,
         :in_flight_length,
-        :last_error
+        :last_error,
+        :recovery_offset
       ) do
         ##
         # @private
@@ -350,6 +356,7 @@ module Gapic
         # @param chunk_granularity [Integer, nil] Alignment modulus returned by server
         # @param in_flight_length [Integer] Byte length of in-flight chunk
         # @param last_error [StandardError, nil] Terminal exception
+        # @param recovery_offset [Integer, nil] Offset the open recovery episode began at; `nil` if none is open
         #
         def initialize status: :initializing,
                        upload_url: nil,
@@ -357,7 +364,8 @@ module Gapic
                        chunk_size: Rules::DEFAULT_CHUNK_SIZE,
                        chunk_granularity: nil,
                        in_flight_length: 0,
-                       last_error: nil
+                       last_error: nil,
+                       recovery_offset: nil
           super(
             status:            status,
             upload_url:        upload_url,
@@ -365,7 +373,8 @@ module Gapic
             chunk_size:        chunk_size,
             chunk_granularity: chunk_granularity,
             in_flight_length:  in_flight_length,
-            last_error:        last_error
+            last_error:        last_error,
+            recovery_offset:   recovery_offset
           )
         end
       end

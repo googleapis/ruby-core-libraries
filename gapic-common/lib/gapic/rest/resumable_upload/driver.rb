@@ -38,7 +38,7 @@ module Gapic
       # The outer tier of the three-tier design. All side effects live here; all protocol decisions live in
       # {Rules}, which carries the state graph and the error category taxonomy. Every retry decision is made
       # here by {RetryDecider}; `ClientStub` is handed a never-retry policy. See
-      # `design/resumable_upload/implementation-guide.md` section 2.5 for the buffer and stream position
+      # `design/resumable_upload/implementation-guide.md` section 2.7 for the buffer and stream position
       # invariants, and section 6.3 for the deadline model.
       #
       # rubocop:disable Metrics/ClassLength
@@ -124,6 +124,8 @@ module Gapic
                                                              RetryPolicies::CONTROL_PLANE_DEFAULTS
           @data_plane_retry_policy = resolve_retry_policy config.data_plane_retry_policy,
                                                           RetryPolicies::DATA_PLANE_DEFAULTS
+          # Started copy of the control plane policy for the open recovery episode; see #execute_send_query.
+          @recovery_policy = nil
         end
 
         ##
@@ -641,13 +643,34 @@ module Gapic
         # @private
         # Sends an offset query command over HTTP.
         #
+        # Every query runs under the recovery episode's retry policy, a started copy of the control plane
+        # policy that lives for the whole episode rather than for one command. {RetryDecider} draws the delay
+        # between attempts of this query from it, and a query that continues the episode
+        # (`instruction.backoff`) first waits for its next delay via `RetryPolicy#perform_delay!`. So the
+        # backoff grows across every re-send in the episode, and the control plane `timeout` budgets the
+        # episode rather than each query.
+        #
+        # `perform_delay!` is used rather than `RetryPolicy#call` because `call` stops sleeping once the
+        # policy's deadline has passed, which would let recovery re-query with no delay at all. Once `delay`
+        # reaches `max_delay` it stays there, so recovery then queries once per `max_delay` until the global
+        # deadline.
+        #
         # @param instruction [Instruction::SendQuery] SendQuery instruction
         # @return [Event::HttpResponse, Event::RequestFailed, Event::GlobalDeadlineExceeded]
         #
         def execute_send_query instruction
+          if instruction.backoff
+            return Event::GlobalDeadlineExceeded.new if deadline_exceeded?
+            @recovery_policy ||= @control_plane_retry_policy.dup.start!
+            @upload_log.recovery_backoff delay: @recovery_policy.delay,
+                                         attempt: @recovery_policy.perform_delay_count + 1
+            @recovery_policy.perform_delay!
+          else
+            @recovery_policy = @control_plane_retry_policy.dup.start!
+          end
           headers = { "X-Goog-Upload-Command" => "query", "Content-Length" => "0" }
           make_post_request instruction.url, headers: headers, body: "",
-                            retry_policy: @control_plane_retry_policy.dup.start!,
+                            retry_policy: @recovery_policy,
                             method_name: "#{@method_name_prefix}.query"
         end
 
@@ -676,7 +699,10 @@ module Gapic
         # @param url [String] Target URL
         # @param headers [Hash] Request headers
         # @param body [String] Request body
-        # @param retry_policy [Gapic::Common::RetryPolicy, nil] Started command retry policy; `nil` sends once
+        # @param retry_policy [Gapic::Common::RetryPolicy, nil] Started retry policy; `nil` sends once. For
+        #   `query` this is the recovery episode's policy, started before this command, so its deadline and
+        #   delay carry over from earlier commands in the episode. `started_at` still bounds each attempt's
+        #   timeout and the post-delay budget check by this command's own start.
         # @param data_plane [Boolean] Whether the request transmits upload bytes (`upload`, `finalize`)
         # @param method_name [String, nil] RPC method name for logging
         # @return [Event::HttpResponse, Event::RequestFailed, Event::GlobalDeadlineExceeded]

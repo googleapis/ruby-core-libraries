@@ -94,6 +94,7 @@ module Gapic
               toStatus:       decision.next_state.status,
               offset:         decision.next_state.offset,
               inFlightLength: decision.next_state.in_flight_length,
+              recoveryOffset: decision.next_state.recovery_offset,
               instructions:   Abridge.instructions(decision.instructions)
             )
           end
@@ -181,6 +182,17 @@ module Gapic
               kind:  event.kind,
               error: event.message
             )
+          end
+
+          ##
+          # @private
+          # Logs the backoff delay about to be performed before a query that continues a recovery episode.
+          #
+          # @param delay [Numeric] Base delay in seconds, before jitter and the `max_delay` cap
+          # @param attempt [Integer] 1-based index of the delay within the recovery episode
+          #
+          def recovery_backoff delay:, attempt:
+            entry :debug, "Performing backoff delay before recovery query", delay: delay, backoffAttempt: attempt
           end
 
           ##
