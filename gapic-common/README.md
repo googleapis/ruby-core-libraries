@@ -61,9 +61,6 @@ See the [CONTRIBUTING](CONTRIBUTING.md) documentation for more information on ho
 
 ## Versioning
 
-This library is currently a **preview** with no guarantees of stability or support. Please get
-involved and let us know if you find it useful and we'll work towards a stable version.
+This library follows [Semantic Versioning](http://semver.org/).
 
-## Disclaimer
-
-This is not an official Google product.
+This library is considered to be stable and will not have backwards-incompatible changes introduced in subsequent minor releases.
