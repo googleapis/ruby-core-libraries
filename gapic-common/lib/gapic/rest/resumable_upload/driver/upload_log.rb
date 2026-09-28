@@ -153,10 +153,10 @@ module Gapic
           #
           def wire_receive event
             upload_status = Rules.header_value event.headers, "x-goog-upload-status"
-            size_recv = Rules.parse_header_positive_integer(
+            size_recv = Rules.parse_header_non_negative_integer(
               Rules.header_value(event.headers, "x-goog-upload-size-received")
             )
-            gran = Rules.parse_header_positive_integer(
+            gran = Rules.parse_header_non_negative_integer(
               Rules.header_value(event.headers, "x-goog-upload-chunk-granularity")
             )
             err = event.error if event.respond_to? :error
@@ -241,7 +241,7 @@ module Gapic
               :warn,
               "Unmatched transition",
               status: state.status,
-              shape:  Rules.shape_of(event),
+              shape:  Rules.shape_of(event, state.status),
               error:  error.message
             )
           end

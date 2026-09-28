@@ -118,7 +118,7 @@ class DriverErrorMappingTest < Minitest::Test
     assert_equal :unknown, event.kind
     assert_equal "Unexpected low-level runtime error", event.message
     assert_same err, event.source_error
-    assert_equal :request_failed_unknown, Rules.shape_of(event)
+    assert_equal :request_failed_unknown, Rules.shape_of(event, :transmission_sending)
 
     # End-to-end via make_post_request
     @client_stub.error_to_raise = err

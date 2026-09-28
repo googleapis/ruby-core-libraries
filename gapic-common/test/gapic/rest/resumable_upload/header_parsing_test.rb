@@ -20,10 +20,12 @@ require "stringio"
 
 ##
 # Tests for strict parsing of the numeric protocol headers `X-Goog-Upload-Size-Received` and
-# `X-Goog-Upload-Chunk-Granularity`. A malformed value is treated exactly like a missing one: the offset
-# falls back to 0 and the granularity to `nil`.
+# `X-Goog-Upload-Chunk-Granularity`.
 #
-# See `design/resumable_upload/implementation-guide.md` sections 3 and 5.
+# * A query answer whose offset is missing or malformed is Category 2 and is re-queried with backoff.
+# * A granularity that is missing, malformed or zero is treated as absent.
+#
+# See `design/resumable_upload/implementation-guide.md` sections 4.1, 4.2 and 5.
 #
 class HeaderParsingTest < Minitest::Test
   include Gapic::Rest::ResumableUpload
@@ -32,8 +34,11 @@ class HeaderParsingTest < Minitest::Test
 
   SESSION_URL = "https://example.com/session"
 
-  # Values that must parse as if the header were absent.
-  UNPARSEABLE = [nil, "", "   ", "0", "00", "-5", "+5", "1.5", "12abc", "abc", "0x10", "1e3", "1_000"].freeze
+  # Delays 1, 2, 4, then capped at 5.
+  BACKOFF = { initial_delay: 1, multiplier: 2, max_delay: 5, jitter: 0 }.freeze
+
+  # Values that are not a non-negative decimal integer.
+  MALFORMED = ["", "   ", "-5", "+5", "1.5", "12abc", "abc", "0x10", "1e3", "1_000"].freeze
 
   class FakeClientStub
     attr_reader :commands
@@ -62,27 +67,82 @@ class HeaderParsingTest < Minitest::Test
     )
   end
 
-  # --- Rules.parse_header_positive_integer ---
+  # --- Rules.parse_header_non_negative_integer ---
 
-  def test_parses_positive_decimal_integers
-    assert_equal 123, Rules.parse_header_positive_integer("123")
-    assert_equal 123, Rules.parse_header_positive_integer(" 123 ")
-    assert_equal 8, Rules.parse_header_positive_integer("008")
-    assert_equal 2**40, Rules.parse_header_positive_integer((2**40).to_s)
+  def test_parses_non_negative_decimal_integers
+    assert_equal 0, Rules.parse_header_non_negative_integer("0")
+    assert_equal 123, Rules.parse_header_non_negative_integer("123")
+    assert_equal 123, Rules.parse_header_non_negative_integer(" 123 ")
+    assert_equal 8, Rules.parse_header_non_negative_integer("008")
+    assert_equal 2**40, Rules.parse_header_non_negative_integer((2**40).to_s)
   end
 
   def test_rejects_everything_else
-    UNPARSEABLE.each do |value|
-      assert_nil Rules.parse_header_positive_integer(value), "value #{value.inspect}"
+    ([nil] + MALFORMED).each do |value|
+      assert_nil Rules.parse_header_non_negative_integer(value), "value #{value.inspect}"
     end
   end
 
-  # --- X-Goog-Upload-Chunk-Granularity on the start response ---
+  # --- X-Goog-Upload-Size-Received on the query answer ---
 
-  def test_unparseable_granularity_is_treated_as_absent
+  def test_query_answer_without_a_parseable_offset_is_category_2
+    ([nil] + MALFORMED).each do |value|
+      assert_equal :response_cat2, Rules.classify_http_response(query_response(value), :recovery),
+                   "value #{value.inspect}"
+    end
+  end
+
+  def test_query_answer_with_a_parseable_offset_is_active
+    ["0", "8", " 8 "].each do |value|
+      assert_equal :response_active, Rules.classify_http_response(query_response(value), :recovery),
+                   "value #{value.inspect}"
+    end
+  end
+
+  # The offset is required only of the query answer. Chunk acknowledgements do not carry it.
+  def test_the_offset_is_not_required_outside_recovery
+    Rules::STATUSES.reject { |status| status == :recovery }.each do |status|
+      assert_equal :response_active, Rules.classify_http_response(query_response(nil), status),
+                   "status #{status.inspect}"
+    end
+  end
+
+  def test_missing_offset_re_queries_with_backoff_instead_of_realigning
+    state = recovery_state offset: 4, recovery_offset: 4
+    decision = Rules.decide state, query_response(nil), @config
+
+    assert_equal :retry_recovery, decision.recipe
+    assert_equal :response_cat2, decision.shape
+    assert_equal :recovery, decision.next_state.status
+    assert_equal 4, decision.next_state.offset
+    assert_equal 4, decision.next_state.recovery_offset
+    assert_empty decision.instructions.grep(Instruction::RealignBuffer)
+    assert decision.instructions.grep(Instruction::SendQuery).first.backoff
+  end
+
+  def test_zero_offset_realigns_to_zero
+    state = recovery_state offset: 0, recovery_offset: 0
+    next_state, instructions = Rules.step state, query_response("0"), @config
+
+    assert_equal :transmission_reading, next_state.status
+    assert_equal 0, next_state.offset
+    assert_equal 0, instructions.grep(Instruction::RealignBuffer).first.server_offset
+  end
+
+  def test_valid_offset_is_used
+    state = recovery_state offset: 4, recovery_offset: 4
+    next_state, = Rules.step state, query_response(" 8 "), @config
+
+    assert_equal 8, next_state.offset
+    assert_nil next_state.recovery_offset
+  end
+
+  # --- X-Goog-Upload-Chunk-Granularity on the start answer ---
+
+  def test_unparseable_or_zero_granularity_is_treated_as_absent
     absent_state, absent_instructions = Rules.step State.new(status: :starting), start_response(nil), @config
 
-    UNPARSEABLE.each do |value|
+    (MALFORMED + ["0", "00"]).each do |value|
       next_state, instructions = Rules.step State.new(status: :starting), start_response(value), @config
 
       assert_nil next_state.chunk_granularity, "value #{value.inspect}"
@@ -98,65 +158,40 @@ class HeaderParsingTest < Minitest::Test
     assert_equal 3, next_state.chunk_size
   end
 
-  # --- X-Goog-Upload-Size-Received on the query response ---
-
-  def test_unparseable_offset_realigns_to_zero
-    UNPARSEABLE.each do |value|
-      state = State.new status: :recovery, upload_url: SESSION_URL, offset: 4, chunk_size: 4, recovery_offset: 4
-      next_state, instructions = Rules.step state, query_response(value), @config
-
-      assert_equal :transmission_reading, next_state.status, "value #{value.inspect}"
-      assert_equal 0, next_state.offset, "value #{value.inspect}"
-      assert_equal 4, next_state.recovery_offset, "value #{value.inspect}"
-      realign = instructions.grep(Instruction::RealignBuffer).first
-      assert_equal 0, realign.server_offset, "value #{value.inspect}"
-      progress = instructions.grep(Instruction::NotifyProgress).first.progress
-      assert_equal 0, progress.bytes_uploaded, "value #{value.inspect}"
-    end
-  end
-
-  def test_trailing_garbage_does_not_yield_a_partial_offset
-    state = State.new status: :recovery, upload_url: SESSION_URL, offset: 0, chunk_size: 4, recovery_offset: 0
-    next_state, = Rules.step state, query_response("8abc"), @config
-
-    assert_equal 0, next_state.offset
-  end
-
-  def test_valid_offset_is_used
-    state = State.new status: :recovery, upload_url: SESSION_URL, offset: 4, chunk_size: 4, recovery_offset: 4
-    next_state, = Rules.step state, query_response(" 8 "), @config
-
-    assert_equal 8, next_state.offset
-    assert_nil next_state.recovery_offset
-  end
-
   # --- Driver ---
 
-  # A negative offset used to reach `stream.seek(-5)` and escape as `Errno::EINVAL`. It now realigns to 0
-  # and re-sends the data from the start.
-  def test_negative_offset_restarts_the_upload_from_zero
-    outcomes = [
-      FakeResponse.new(status: 200, headers: { "X-Goog-Upload-URL" => SESSION_URL, "X-Goog-Upload-Status" => "active" },
-                       body: ""),
-      FakeResponse.new(status: 503, headers: {}, body: "Service Unavailable"),
-      FakeResponse.new(status: 200, headers: { "X-Goog-Upload-Status" => "active", "X-Goog-Upload-Size-Received" => "-5" },
-                       body: ""),
-      FakeResponse.new(status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: '{"done":true}')
-    ]
+  # A negative offset used to reach `stream.seek(-5)` and escape as `Errno::EINVAL`. It is now re-queried.
+  def test_malformed_offset_is_re_queried_after_a_backoff
+    outcomes = [initiation_response, http_error(503), query_answer("-5"), query_answer("0"), final_response]
     stub = FakeClientStub.new outcomes
-    config = StartUploadConfig.new(
-      initial_url:                "https://example.com/upload",
-      stream:                     StringIO.new("0123"),
-      upload_size:                4,
-      chunk_size:                 10,
-      data_plane_retry_policy:    { retry_codes: [] },
-      control_plane_retry_policy: { initial_delay: 0.01, jitter: 0 }
-    )
 
-    result = Driver.new(client_stub: stub, config: config).run
+    result, delays = run_recording_delays stub
 
     assert_equal '{"done":true}', result
-    assert_equal ["start", "upload, finalize", "query", "upload, finalize"], stub.commands
+    assert_equal [1.0], delays
+    assert_equal ["start", "upload, finalize", "query", "query", "upload, finalize"], stub.commands
+  end
+
+  def test_endless_missing_offset_backs_off_until_the_deadline
+    outcomes = [initiation_response, http_error(503)] + Array.new(50) { query_answer(nil) }
+    stub = FakeClientStub.new outcomes
+
+    delays = []
+    clock = 0.0
+    sleep_stub = lambda do |seconds|
+      delays << seconds.to_f
+      clock += seconds
+    end
+    Process.stub :clock_gettime, ->(*) { clock } do
+      Kernel.stub :sleep, sleep_stub do
+        assert_raises DeadlineExceededError do
+          run_upload stub, timeout: 20
+        end
+      end
+    end
+
+    assert_equal [1.0, 2.0, 4.0, 5.0, 5.0], delays.first(5)
+    refute_includes stub.commands.drop(2), "upload, finalize"
   end
 
   # --- UploadLog ---
@@ -166,12 +201,17 @@ class HeaderParsingTest < Minitest::Test
     refute fields.key?("sizeReceived")
     refute fields.key?("granularity")
 
-    fields = wire_receive_fields "X-Goog-Upload-Size-Received" => "12", "X-Goog-Upload-Chunk-Granularity" => "256"
-    assert_equal 12, fields["sizeReceived"]
+    fields = wire_receive_fields "X-Goog-Upload-Size-Received" => "0", "X-Goog-Upload-Chunk-Granularity" => "256"
+    assert_equal 0, fields["sizeReceived"]
     assert_equal 256, fields["granularity"]
   end
 
   private
+
+  def recovery_state offset:, recovery_offset:
+    State.new status: :recovery, upload_url: SESSION_URL, offset: offset, chunk_size: 4,
+              recovery_offset: recovery_offset
+  end
 
   def start_response granularity
     headers = { "x-goog-upload-status" => "active", "x-goog-upload-url" => SESSION_URL }
@@ -183,6 +223,46 @@ class HeaderParsingTest < Minitest::Test
     headers = { "x-goog-upload-status" => "active" }
     headers["x-goog-upload-size-received"] = received unless received.nil?
     Event::HttpResponse.new status: 200, headers: headers
+  end
+
+  def run_recording_delays stub
+    delays = []
+    result = Kernel.stub :sleep, ->(seconds) { delays << seconds.to_f } do
+      run_upload stub
+    end
+    [result, delays]
+  end
+
+  def run_upload stub, **overrides
+    config = StartUploadConfig.new(
+      initial_url:                "https://example.com/upload",
+      stream:                     StringIO.new("0123"),
+      upload_size:                4,
+      chunk_size:                 10,
+      data_plane_retry_policy:    { retry_codes: [] },
+      control_plane_retry_policy: BACKOFF,
+      **overrides
+    )
+    Driver.new(client_stub: stub, config: config).run
+  end
+
+  def initiation_response
+    FakeResponse.new status: 200, headers: { "X-Goog-Upload-URL" => SESSION_URL, "X-Goog-Upload-Status" => "active" },
+                     body: ""
+  end
+
+  def query_answer received
+    headers = { "X-Goog-Upload-Status" => "active" }
+    headers["X-Goog-Upload-Size-Received"] = received unless received.nil?
+    FakeResponse.new status: 200, headers: headers, body: ""
+  end
+
+  def final_response
+    FakeResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: '{"done":true}'
+  end
+
+  def http_error status
+    Faraday::ServerError.new "the server responded with status #{status}", { status: status, headers: {}, body: "" }
   end
 
   def wire_receive_fields headers

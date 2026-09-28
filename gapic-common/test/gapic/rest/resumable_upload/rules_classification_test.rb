@@ -48,52 +48,52 @@ class RulesClassificationTest < Minitest::Test
 
   def test_classify_http_response_active
     resp_200 = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "active" }, body: ""
-    assert_equal :response_active, Rules.classify_http_response(resp_200)
+    assert_equal :response_active, Rules.classify_http_response(resp_200, :transmission_sending)
 
     # Value case variations
     ["Active", "ACTIVE", "aCtIvE"].each do |val|
       resp = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => val }, body: ""
-      assert_equal :response_active, Rules.classify_http_response(resp)
+      assert_equal :response_active, Rules.classify_http_response(resp, :transmission_sending)
     end
 
     # Non-200 with active maps to Category 2
     [503, 500, 400, 408].each do |code|
       resp_non_200 = Event::HttpResponse.new status: code, headers: { "X-Goog-Upload-Status" => "active" }, body: ""
-      assert_equal :response_cat2, Rules.classify_http_response(resp_non_200)
+      assert_equal :response_cat2, Rules.classify_http_response(resp_non_200, :transmission_sending)
     end
   end
 
   def test_classify_http_response_final
     resp_200 = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "final" }, body: ""
-    assert_equal :response_final, Rules.classify_http_response(resp_200)
+    assert_equal :response_final, Rules.classify_http_response(resp_200, :transmission_sending)
 
     # Value case variations
     ["Final", "FINAL"].each do |val|
       resp = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => val }, body: ""
-      assert_equal :response_final, Rules.classify_http_response(resp)
+      assert_equal :response_final, Rules.classify_http_response(resp, :transmission_sending)
     end
 
     # Non-200 with final maps to response_rejected
     [400, 404, 500].each do |code|
       resp_non_200 = Event::HttpResponse.new status: code, headers: { "X-Goog-Upload-Status" => "final" }, body: ""
-      assert_equal :response_rejected, Rules.classify_http_response(resp_non_200)
+      assert_equal :response_rejected, Rules.classify_http_response(resp_non_200, :transmission_sending)
     end
   end
 
   def test_classify_http_response_cancelled
     resp_200 = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "cancelled" }, body: ""
-    assert_equal :response_cancelled, Rules.classify_http_response(resp_200)
+    assert_equal :response_cancelled, Rules.classify_http_response(resp_200, :transmission_sending)
 
     # Value case variations
     ["Cancelled", "CANCELLED"].each do |val|
       resp = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => val }, body: ""
-      assert_equal :response_cancelled, Rules.classify_http_response(resp)
+      assert_equal :response_cancelled, Rules.classify_http_response(resp, :transmission_sending)
     end
 
     # Non-200 with cancelled maps to fatal bad response
     [400, 500].each do |code|
       resp_non_200 = Event::HttpResponse.new status: code, headers: { "X-Goog-Upload-Status" => "cancelled" }, body: ""
-      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_non_200)
+      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_non_200, :transmission_sending)
     end
   end
 
@@ -106,10 +106,10 @@ class RulesClassificationTest < Minitest::Test
 
   def test_classify_http_response_headerless_200_is_cat2
     resp_200 = Event::HttpResponse.new status: 200, headers: {}, body: ""
-    assert_equal :response_cat2, Rules.classify_http_response(resp_200)
+    assert_equal :response_cat2, Rules.classify_http_response(resp_200, :transmission_sending)
 
     resp_empty = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "" }, body: ""
-    assert_equal :response_cat2, Rules.classify_http_response(resp_empty)
+    assert_equal :response_cat2, Rules.classify_http_response(resp_empty, :transmission_sending)
   end
 
   # A non-200 without a definitive status header is Category 2 only when its status is listed in
@@ -118,7 +118,7 @@ class RulesClassificationTest < Minitest::Test
     [{}, { "X-Goog-Upload-Status" => "" }, { "X-Goog-Upload-Status" => "active" }].each do |headers|
       Rules::CAT2_STATUS_CODES.each do |code|
         resp = Event::HttpResponse.new status: code, headers: headers, body: ""
-        assert_equal :response_cat2, Rules.classify_http_response(resp),
+        assert_equal :response_cat2, Rules.classify_http_response(resp, :transmission_sending),
                      "Expected #{code} with #{headers.inspect} to classify as :response_cat2"
       end
     end
@@ -129,7 +129,7 @@ class RulesClassificationTest < Minitest::Test
     [{}, { "X-Goog-Upload-Status" => "" }, { "X-Goog-Upload-Status" => "active" }].each do |headers|
       [301, 401, 403, 404, 405, 410, 413, 415, 418, 501, 505, 599].each do |code|
         resp = Event::HttpResponse.new status: code, headers: headers, body: ""
-        assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp),
+        assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp, :transmission_sending),
                      "Expected #{code} with #{headers.inspect} to classify as :response_fatal_bad_response"
       end
     end
@@ -138,10 +138,10 @@ class RulesClassificationTest < Minitest::Test
   def test_classify_http_response_unknown_header_values
     ["absconded", "pending", "in_progress", "error", "unknown"].each do |unknown_val|
       resp_200 = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => unknown_val }, body: ""
-      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_200)
+      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_200, :transmission_sending)
 
       resp_400 = Event::HttpResponse.new status: 400, headers: { "X-Goog-Upload-Status" => unknown_val }, body: ""
-      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_400)
+      assert_equal :response_fatal_bad_response, Rules.classify_http_response(resp_400, :transmission_sending)
     end
   end
 
@@ -149,55 +149,55 @@ class RulesClassificationTest < Minitest::Test
     keys = ["x-goog-upload-status", "X-GOOG-UPLOAD-STATUS", "X-Goog-Upload-Status", :"x-goog-upload-status"]
     keys.each do |key|
       resp = Event::HttpResponse.new status: 200, headers: { key => "active" }, body: ""
-      assert_equal :response_active, Rules.classify_http_response(resp)
+      assert_equal :response_active, Rules.classify_http_response(resp, :transmission_sending)
     end
   end
 
   def test_shape_of_control_events
-    assert_equal :start_upload, Rules.shape_of(Event::StartUpload.new)
-    assert_equal :start_upload, Rules.shape_of(Event::StartUpload)
-    assert_equal :resume_upload, Rules.shape_of(Event::ResumeUpload.new)
-    assert_equal :resume_upload, Rules.shape_of(Event::ResumeUpload)
-    assert_equal :user_cancel, Rules.shape_of(Event::Cancel.new)
-    assert_equal :user_cancel, Rules.shape_of(Event::Cancel)
-    assert_equal :global_deadline_exceeded, Rules.shape_of(Event::GlobalDeadlineExceeded.new)
-    assert_equal :global_deadline_exceeded, Rules.shape_of(Event::GlobalDeadlineExceeded)
+    assert_equal :start_upload, Rules.shape_of(Event::StartUpload.new, :transmission_sending)
+    assert_equal :start_upload, Rules.shape_of(Event::StartUpload, :transmission_sending)
+    assert_equal :resume_upload, Rules.shape_of(Event::ResumeUpload.new, :transmission_sending)
+    assert_equal :resume_upload, Rules.shape_of(Event::ResumeUpload, :transmission_sending)
+    assert_equal :user_cancel, Rules.shape_of(Event::Cancel.new, :transmission_sending)
+    assert_equal :user_cancel, Rules.shape_of(Event::Cancel, :transmission_sending)
+    assert_equal :global_deadline_exceeded, Rules.shape_of(Event::GlobalDeadlineExceeded.new, :transmission_sending)
+    assert_equal :global_deadline_exceeded, Rules.shape_of(Event::GlobalDeadlineExceeded, :transmission_sending)
   end
 
   def test_shape_of_chunk_read
     full_chunk = Event::ChunkRead.new bytes_buffered: 4096, eof: false
-    assert_equal :chunk_read_full, Rules.shape_of(full_chunk)
+    assert_equal :chunk_read_full, Rules.shape_of(full_chunk, :transmission_sending)
 
     eof_data = Event::ChunkRead.new bytes_buffered: 1024, eof: true
-    assert_equal :chunk_read_eof_with_data, Rules.shape_of(eof_data)
+    assert_equal :chunk_read_eof_with_data, Rules.shape_of(eof_data, :transmission_sending)
 
     eof_empty = Event::ChunkRead.new bytes_buffered: 0, eof: true
-    assert_equal :chunk_read_eof_empty, Rules.shape_of(eof_empty)
+    assert_equal :chunk_read_eof_empty, Rules.shape_of(eof_empty, :transmission_sending)
   end
 
   def test_shape_of_request_failed
     timeout = Event::RequestFailed.new kind: :timeout, message: "read timeout"
-    assert_equal :request_timeout, Rules.shape_of(timeout)
+    assert_equal :request_timeout, Rules.shape_of(timeout, :transmission_sending)
 
     exhausted = Event::RequestFailed.new kind: :retries_exhausted, message: "exhausted"
-    assert_equal :request_retries_exhausted, Rules.shape_of(exhausted)
+    assert_equal :request_retries_exhausted, Rules.shape_of(exhausted, :transmission_sending)
 
     conn_failed = Event::RequestFailed.new kind: :connection_failed, message: "dropped"
-    assert_equal :request_connection_failed, Rules.shape_of(conn_failed)
+    assert_equal :request_connection_failed, Rules.shape_of(conn_failed, :transmission_sending)
 
     other = Event::RequestFailed.new kind: :other, message: "unknown error"
-    assert_equal :request_failed_unknown, Rules.shape_of(other)
+    assert_equal :request_failed_unknown, Rules.shape_of(other, :transmission_sending)
   end
 
   def test_shape_of_http_response_delegates_to_classify
     resp = Event::HttpResponse.new status: 200, headers: { "X-Goog-Upload-Status" => "active" }, body: ""
-    assert_equal :response_active, Rules.shape_of(resp)
+    assert_equal :response_active, Rules.shape_of(resp, :transmission_sending)
   end
 
   def test_shape_of_unknown_event
-    assert_equal :unknown, Rules.shape_of(Object.new)
-    assert_equal :unknown, Rules.shape_of(nil)
-    assert_equal :unknown, Rules.shape_of("unrecognized_event")
+    assert_equal :unknown, Rules.shape_of(Object.new, :transmission_sending)
+    assert_equal :unknown, Rules.shape_of(nil, :transmission_sending)
+    assert_equal :unknown, Rules.shape_of("unrecognized_event", :transmission_sending)
   end
 
   ##
@@ -234,7 +234,7 @@ class RulesClassificationTest < Minitest::Test
     corpus = shape_corpus
 
     corpus.each do |expected_shape, event|
-      assert_equal expected_shape, Rules.shape_of(event),
+      assert_equal expected_shape, Rules.shape_of(event, :transmission_sending),
                    "Corpus event for #{expected_shape} no longer classifies as that shape"
     end
 

@@ -30,8 +30,8 @@ module Gapic
       #
       # ### Model
       #
-      # {Rules.decide} is the protocol. It is a total function of `[state.status, shape_of(event)]` returning a
-      # {Decision} that carries the next {State} and the instructions for the Driver to execute. Three
+      # {Rules.decide} is the protocol. It is a total function of `[state.status, shape_of(event, state.status)]`
+      # returning a {Decision} that carries the next {State} and the instructions for the Driver to execute. Three
       # vocabularies define it, each published as a frozen constant:
       #
       # * {STATUSES} - protocol lifecycle statuses a {State} may hold.
@@ -354,8 +354,10 @@ module Gapic
         # Classifies incoming event into a canonical shape symbol.
         #
         # @param event [Object] Input event
+        # @param state_status [Symbol] Status of the state the event arrives in. Only HTTP responses use it; see
+        #   {Rules.classify_http_response}.
         # @return [Symbol] Canonical event shape
-        def self.shape_of event
+        def self.shape_of event, state_status
           case event
           when Event::StartUpload, Event::StartUpload.singleton_class
             :start_upload
@@ -370,7 +372,7 @@ module Gapic
           when Event::RequestFailed
             classify_request_failed event
           when Event::HttpResponse
-            classify_http_response event
+            classify_http_response event, state_status
           when Class
             classify_event_class event
           else
@@ -380,7 +382,8 @@ module Gapic
 
         ##
         # @private
-        # Top-level transition decision engine. Routes `[state.status, shape_of(event)]` to a recipe and runs it.
+        # Top-level transition decision engine. Routes `[state.status, shape_of(event, state.status)]` to a recipe
+        # and runs it.
         #
         # @param state [State] Current state
         # @param event [Object] Input event
@@ -388,7 +391,7 @@ module Gapic
         # @return [Decision] Decision snapshot
         # @raise [InternalError] If {Rules.shape_of} or {Rules.route} produces an unlisted value
         def self.decide state, event, config
-          shape = shape_of event
+          shape = shape_of event, state.status
           unless SHAPES.include? shape
             raise InternalError, "Resumable upload internal error: shape_of returned unknown shape #{shape.inspect}"
           end
@@ -575,7 +578,8 @@ module Gapic
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.begin_transmission state, event, config
           granularity_str = header_value event.headers, "x-goog-upload-chunk-granularity"
-          granularity = parse_header_positive_integer granularity_str
+          granularity = parse_header_non_negative_integer granularity_str
+          granularity = nil unless granularity&.positive?
           chunk_size = resolve_chunk_size config.chunk_size, granularity
           upload_url = header_value event.headers, "x-goog-upload-url"
           next_state = state.with(
@@ -798,9 +802,9 @@ module Gapic
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.realign_from_recovery state, event, config
           server_offset_str = header_value event.headers, "x-goog-upload-size-received"
-          # A missing or malformed header realigns to 0. The server does not strip this header alone while
-          # still reporting `active`, so this only has to be safe, not smart.
-          server_offset = parse_header_positive_integer(server_offset_str) || 0
+          # Never nil here: {Rules.classify_http_response} classifies a query answer without a parseable offset
+          # as Category 2, so it is routed to {Rules.retry_recovery} instead.
+          server_offset = parse_header_non_negative_integer server_offset_str
           # `>`, not `!=`: a lower offset is a regression, not progress. Closing on it would reset the backoff,
           # and a server whose reported offset flips between two values would then query with no delay forever.
           progressed = state.recovery_offset.nil? || server_offset > state.recovery_offset
@@ -984,7 +988,7 @@ module Gapic
         # @param _config [StartUploadConfig, ResumeUploadConfig] Session configuration
         # @raise [InvalidTransitionError]
         def self.fail_with_unmatched_transition state, event, _config
-          shape = shape_of event
+          shape = shape_of event, state.status
           action = STATE_DESCRIPTIONS[state.status] || "processing #{state.status}"
           happened = describe_event event, shape
           message = "Resumable upload failed while #{action}: #{happened}."
@@ -1023,21 +1027,20 @@ module Gapic
         # @private
         # Parses a numeric protocol header value strictly.
         #
-        # Accepts only a positive decimal integer, optionally surrounded by whitespace. Anything else —
-        # `nil`, empty, `0`, signed, fractional, or trailing garbage such as `"12abc"` — returns `nil`, so
-        # callers treat a malformed header the same as a missing one. `String#to_i` is deliberately not
-        # used: it turns `"12abc"` into `12` and `"-5"` into `-5`.
+        # Accepts only a non-negative decimal integer, optionally surrounded by whitespace. Anything else —
+        # `nil`, empty, signed, fractional, or trailing garbage such as `"12abc"` — returns `nil`, so callers
+        # treat a malformed header the same as a missing one. `String#to_i` is deliberately not used: it turns
+        # `"12abc"` into `12` and `"-5"` into `-5`.
         #
         # @param value [String, nil] Raw header value
-        # @return [Integer, nil] Parsed value, or `nil` if the value is not a positive integer
-        def self.parse_header_positive_integer value
+        # @return [Integer, nil] Parsed value, or `nil` if the value is not a non-negative integer
+        def self.parse_header_non_negative_integer value
           return nil unless value.is_a? String
 
           stripped = value.strip
           return nil unless stripped.match?(/\A\d+\z/)
 
-          parsed = Integer stripped, 10
-          parsed.positive? ? parsed : nil
+          Integer stripped, 10
         end
 
         ##
@@ -1064,21 +1067,27 @@ module Gapic
         # | `X-Goog-Upload-Status` | `200`         | in CAT2_STATUS_CODES | any other non-200 |
         # |------------------------|---------------|----------------|-------------------|
         # | missing / empty        | `cat2`        | `cat2`         | `fatal_bad_response` |
-        # | `active`               | `active`      | `cat2`         | `fatal_bad_response` |
+        # | `active`               | `active` (1)  | `cat2`         | `fatal_bad_response` |
         # | `final`                | `final`       | `rejected`     | `rejected`        |
         # | `cancelled`            | `cancelled`   | `fatal_bad_response` | `fatal_bad_response` |
         # | any other value        | `fatal_bad_response` | `fatal_bad_response` | `fatal_bad_response` |
         #
         # A headerless `200` is Category 2 regardless of {CAT2_STATUS_CODES}.
         #
+        # (1) `cat2` instead if the response lacks a header that the command it answers requires (see
+        # {Rules.required_headers_present?}). This is the only cell that depends on `state_status`: every status
+        # that awaits a response awaits exactly one command, so the status says which headers are required.
+        #
         # @param response [Event::HttpResponse] Response event
+        # @param state_status [Symbol] Status of the state the response arrives in
         # @return [Symbol] Canonical response shape
-        def self.classify_http_response response
+        def self.classify_http_response response, state_status
           status_header = header_value(response.headers, "x-goog-upload-status")&.downcase
 
           case status_header
           when "active"
-            response.status == 200 ? :response_active : classify_unsuccessful_status(response.status)
+            return classify_unsuccessful_status response.status unless response.status == 200
+            required_headers_present?(response, state_status) ? :response_active : :response_cat2
           when "final"
             response.status == 200 ? :response_final : :response_rejected
           when "cancelled"
@@ -1087,6 +1096,27 @@ module Gapic
             response.status == 200 ? :response_cat2 : classify_unsuccessful_status(response.status)
           else
             :response_fatal_bad_response
+          end
+        end
+
+        ##
+        # @private
+        # Whether a `200` `active` response carries the headers the command it answers needs to be acted on.
+        #
+        # * `query` (awaited in `:recovery`): `X-Goog-Upload-Size-Received` must parse as a non-negative integer.
+        #   Treating a missing or malformed offset as `0` would silently restart the upload.
+        #
+        # A response that fails this check is Category 2, like a response with no upload status header at all.
+        #
+        # @param response [Event::HttpResponse] Response event
+        # @param state_status [Symbol] Status of the state the response arrives in
+        # @return [Boolean]
+        def self.required_headers_present? response, state_status
+          case state_status
+          when :recovery
+            !parse_header_non_negative_integer(header_value(response.headers, "x-goog-upload-size-received")).nil?
+          else
+            true
           end
         end
 
