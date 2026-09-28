@@ -153,8 +153,12 @@ module Gapic
           #
           def wire_receive event
             upload_status = Rules.header_value event.headers, "x-goog-upload-status"
-            size_recv = Rules.header_value event.headers, "x-goog-upload-size-received"
-            gran = Rules.header_value event.headers, "x-goog-upload-chunk-granularity"
+            size_recv = Rules.parse_header_positive_integer(
+              Rules.header_value(event.headers, "x-goog-upload-size-received")
+            )
+            gran = Rules.parse_header_positive_integer(
+              Rules.header_value(event.headers, "x-goog-upload-chunk-granularity")
+            )
             err = event.error if event.respond_to? :error
             fields = {
               status:  event.status,
@@ -163,8 +167,8 @@ module Gapic
             }
             fields[:uploadStatus] = upload_status if upload_status
             fields[:errorStatus] = err.status if err&.status
-            fields[:sizeReceived] = size_recv.to_i if size_recv
-            fields[:granularity] = gran.to_i if gran
+            fields[:sizeReceived] = size_recv if size_recv
+            fields[:granularity] = gran if gran
 
             entry :debug, "Received HTTP #{event.status}", **fields
           end

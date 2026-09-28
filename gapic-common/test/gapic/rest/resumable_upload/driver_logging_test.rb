@@ -196,7 +196,7 @@ class DriverLoggingTest < Minitest::Test
       Driver.new(client_stub: FakeStub.new(responses), config: config, logger: recording).run
     end
 
-    backoff_entries = recording.entries.select { |e| e.message.message == "Backing off before recovery query" }
+    backoff_entries = recording.entries.select { |e| e.message.message == "Performing backoff delay before recovery query" }
     assert_equal 1, backoff_entries.size
     assert_equal Logger::DEBUG, backoff_entries.first.severity
     assert_in_delta 0.25, backoff_entries.first.message.fields["delay"]

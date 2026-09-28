@@ -575,7 +575,7 @@ module Gapic
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.begin_transmission state, event, config
           granularity_str = header_value event.headers, "x-goog-upload-chunk-granularity"
-          granularity = granularity_str&.to_i
+          granularity = parse_header_positive_integer granularity_str
           chunk_size = resolve_chunk_size config.chunk_size, granularity
           upload_url = header_value event.headers, "x-goog-upload-url"
           next_state = state.with(
@@ -798,7 +798,9 @@ module Gapic
         # @return [Array<State, Array<Object>>] Tuple of [next_state, instructions]
         def self.realign_from_recovery state, event, config
           server_offset_str = header_value event.headers, "x-goog-upload-size-received"
-          server_offset = server_offset_str.to_i
+          # A missing or malformed header realigns to 0. The server does not strip this header alone while
+          # still reporting `active`, so this only has to be safe, not smart.
+          server_offset = parse_header_positive_integer(server_offset_str) || 0
           # `>`, not `!=`: a lower offset is a regression, not progress. Closing on it would reset the backoff,
           # and a server whose reported offset flips between two values would then query with no delay forever.
           progressed = state.recovery_offset.nil? || server_offset > state.recovery_offset
@@ -1015,6 +1017,27 @@ module Gapic
           else
             "received unexpected event #{shape} (#{event.class.name})"
           end
+        end
+
+        ##
+        # @private
+        # Parses a numeric protocol header value strictly.
+        #
+        # Accepts only a positive decimal integer, optionally surrounded by whitespace. Anything else —
+        # `nil`, empty, `0`, signed, fractional, or trailing garbage such as `"12abc"` — returns `nil`, so
+        # callers treat a malformed header the same as a missing one. `String#to_i` is deliberately not
+        # used: it turns `"12abc"` into `12` and `"-5"` into `-5`.
+        #
+        # @param value [String, nil] Raw header value
+        # @return [Integer, nil] Parsed value, or `nil` if the value is not a positive integer
+        def self.parse_header_positive_integer value
+          return nil unless value.is_a? String
+
+          stripped = value.strip
+          return nil unless stripped.match?(/\A\d+\z/)
+
+          parsed = Integer stripped, 10
+          parsed.positive? ? parsed : nil
         end
 
         ##

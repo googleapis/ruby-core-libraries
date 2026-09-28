@@ -338,7 +338,7 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
     *   `X-Goog-Upload-Header-Content-Type: config.content_type`
     *   `X-Goog-Upload-Header-Content-Length: config.upload_size` (if known upfront).
     *   Callers cannot supply either of these two headers via `initial_headers`; see the reserved-headers rule in Section 2 (doing so raises an `ArgumentError`). Other `X-Goog-Upload-Header-*` pass-through headers are permitted.
-2.  **Offset Extraction**: On `query` responses, the acknowledged byte count is extracted from `X-Goog-Upload-Size-Received` as an integer (`server_offset`).
+2.  **Offset Extraction**: On `query` responses, the acknowledged byte count is extracted from `X-Goog-Upload-Size-Received` as an integer (`server_offset`). Parsing is strict (`Rules.parse_header_positive_integer`): only a positive decimal integer, optionally surrounded by whitespace, is accepted. A missing, empty, negative or otherwise malformed value (`"-5"`, `"12abc"`, `"1.5"`) yields `server_offset = 0`, so the client realigns to the start of the upload. Validating the reported offset beyond that is out of scope: a server that answers `active` while stripping only this header is not a supported scenario.
 3.  **Request Modification on 4xx**: Retrying Category 2 errors requires querying the backend for `server_offset` first.
 4.  **Standard Retry Configuration & Distinct Policies**: The Driver resolves one `Gapic::Common::RetryPolicy` per plane. A policy supplies the retry budget (`timeout`), the backoff schedule, and the caller-facing `retry_predicate` / `retry_codes`; which outcomes are re-sent at all is decided by `Driver::RetryDecider` (Section 6.1.1). None of the defaults carries a `retry_predicate`, so a caller-supplied one is consulted as-is, ahead of `retry_codes`. `retry_codes` are derived from the HTTP status sets on `Rules` via `Gapic::Common::ErrorCodes.grpc_error_for`.
     *   **Start Policy (`start_retry_policy`)**: Applies to session initiation (`start`). Default `retry_codes`: `RETRIABLE_4XX_STATUS_CODES` + `RETRIABLE_5XX_STATUS_CODES` (HTTP `409`, `429`, `499`, `500`, `503`, `504` → `ALREADY_EXISTS`, `RESOURCE_EXHAUSTED`, `CANCELLED`, `INTERNAL`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`). HTTP `408` and `502` map to `UNKNOWN` and are deliberately not retried.
@@ -356,7 +356,7 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **`Initializing`** | `:start_upload` | `Event::StartUpload` | `status = :starting` | `Starting` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :initiating, bytes_uploaded: 0, total_bytes: config.upload_size))`<br/>`Instruction::SendStart.new(url: config.initial_url, headers: config.initial_headers, body: config.initial_body)` |
 | **`Initializing`** | `:resume_upload` | `Event::ResumeUpload` | `upload_url = event.upload_url`<br/>`chunk_size = event.chunk_size`<br/>`offset = 0`<br/>`recovery_offset = 0`<br/>`status = :recovery` | `Recovery` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :initiating, bytes_uploaded: 0, total_bytes: event.upload_size))`<br/>`Instruction::SendQuery.new(url: event.upload_url, backoff: false)` |
-| **`Starting`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `upload_url = headers['X-Goog-Upload-URL']`<br/>`chunk_granularity = headers['...-Granularity']&.to_i`<br/>`chunk_size = resolve(config, chunk_granularity)`<br/>`offset = 0`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: 0, total_bytes: config.upload_size))`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
+| **`Starting`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `upload_url = headers['X-Goog-Upload-URL']`<br/>`chunk_granularity = parse_header_positive_integer(headers['...-Granularity'])`<br/>`chunk_size = resolve(config, chunk_granularity)`<br/>`offset = 0`<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: 0, total_bytes: config.upload_size))`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
 | **`Starting`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, _)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Starting`** | `:response_cat2` / `:response_fatal_bad_response` | `Event::HttpResponse` (Non-200, or a headerless `200` after the start budget is spent; see Section 6.1) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
 | **`Starting`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` / `:request_failed_unknown` | `Event::RequestFailed(kind:, message:, source_error:)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
@@ -381,7 +381,7 @@ Source: `lib/gapic/rest/resumable_upload/driver.rb`
 | **`Finalizing \| Sending finalize`** | `:request_retries_exhausted` / `:request_failed_unknown` | `Event::RequestFailed(kind: :retries_exhausted \| :unknown)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
 | **`Finalizing \| Sending finalize`** | `:response_rejected` | `Event::HttpResponse(non-200, headers, body)` with `Status: final` | `status = :rejected` | `Rejected` | `Instruction::TerminateFailure.new(error: Gapic::Rest::ResumableUpload::UploadRejectedError.from(event))` |
 | **`Finalizing \| Sending finalize`** | `:response_fatal_bad_response` | `Event::HttpResponse` (Fatal status; see Section 6.1.3) | `last_error = Gapic::Rest::ResumableUpload::BadResponseError.from(event)`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: state.last_error)` |
-| **`Recovery`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = headers['X-Goog-Upload-Size-Received'].to_i`<br/>`in_flight_length = 0`<br/>`recovery_offset = nil` if the new `offset` exceeds `state.recovery_offset`, else unchanged<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
+| **`Recovery`** | `:response_active` | `Event::HttpResponse(200, headers, _)` with `Status: active` | `offset = parse_header_positive_integer(headers['X-Goog-Upload-Size-Received']) \|\| 0`<br/>`in_flight_length = 0`<br/>`recovery_offset = nil` if the new `offset` exceeds `state.recovery_offset`, else unchanged<br/>`status = :transmission_reading` | `Transmission \| Reading from stream` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :uploading, bytes_uploaded: state.offset, total_bytes: config.upload_size))`<br/>`Instruction::RealignBuffer.new(server_offset: state.offset)`<br/>`Instruction::FillBuffer.new(target_bytesize: state.chunk_size)` |
 | **`Recovery`** | `:response_final` | `Event::HttpResponse(200, headers, body)` with `Status: final` | `in_flight_length = 0`<br/>`status = :success` | `Success` | `Instruction::NotifyProgress.new(progress: Progress.new(phase: :completed, bytes_uploaded: state.offset, total_bytes: state.offset))`<br/>`Instruction::TerminateSuccess.new(response: event)` |
 | **`Recovery`** | `:response_cat2` | `Event::HttpResponse` (Category 2; see Section 6.1.2) | `status = :recovery` | `Recovery` | `Instruction::SendQuery.new(url: state.upload_url, backoff: true)` |
 | **`Recovery`** | `:request_retries_exhausted` / `:request_connection_failed` / `:request_timeout` / `:request_failed_unknown` | `Event::RequestFailed(kind:, ...)` | `last_error = event.source_error`<br/>`status = :error` | `Error` | `Instruction::TerminateFailure.new(error: event.source_error)` |
@@ -460,12 +460,12 @@ Upon receiving `200 OK` from the `start` request, `Core` inspects the response h
 ### 5.1 Variable Definitions
 *   `DEFAULT_CHUNK_SIZE`: Default chunk size of `8_388_608` bytes (8 MB).
 *   `user_chunk_size`: Explicit chunk size specified in `StartUploadConfig.chunk_size` (or `nil` if unspecified).
-*   `chunk_granularity`: Required byte alignment modulus parsed from header `X-Goog-Upload-Chunk-Granularity` as an Integer (or `nil` if header is absent).
+*   `chunk_granularity`: Required byte alignment modulus parsed from header `X-Goog-Upload-Chunk-Granularity` as a positive Integer, or `nil`. Parsing is strict (`Rules.parse_header_positive_integer`): a missing, empty, zero, negative or otherwise malformed value is `nil`, exactly as if the server had not sent the header.
 *   `effective_chunk_size`: Final calculated byte size used by Driver for in-memory buffering and chunk transmission.
 
 ### 5.2 Resolution Rules
 
-#### Rule 1: No Server Granularity Specified (`chunk_granularity` is nil or 0)
+#### Rule 1: No Server Granularity Specified (`chunk_granularity` is nil)
 When the server does not specify a granularity requirement:
 *   If `user_chunk_size` is provided: `effective_chunk_size = user_chunk_size`.
 *   If `user_chunk_size` is omitted: `effective_chunk_size = DEFAULT_CHUNK_SIZE`.
@@ -671,7 +671,7 @@ The `Driver` emits structured logs across three severity levels (`INFO`, `DEBUG`
 | `DEBUG` | Wire | Inbound HTTP response (`wire_receive`) | `Received HTTP <status>` |
 | `DEBUG` | Wire | Transport exception (`wire_failure`) | `Request failed: <kind>` |
 | `DEBUG` | Buffer | Stream/buffer realignment (`buffer_realign`) | `Buffer realignment: <action>` |
-| `DEBUG` | Recovery | Backoff before a query that continues a recovery episode (`recovery_backoff`) | `Backing off before recovery query` |
+| `DEBUG` | Recovery | Backoff before a query that continues a recovery episode (`recovery_backoff`) | `Performing backoff delay before recovery query` |
 | `WARN` | Lifecycle | `:fail_with_deadline_exceeded`, `:fail_with_rejected`, `:fail_with_bad_response`, `:fail_with_request_error` | Resumable upload failed |
 | `WARN` | Lifecycle | `:fail_with_cancelled` | Resumable upload canceled on the server |
 | `WARN` | Transition | `InvalidTransitionError` (`unmatched_transition`) | Unmatched transition |
@@ -713,8 +713,8 @@ All log entries emitted by `UploadLog` populate structured fields in `Google::Lo
     *   `body`: Abridged payload or error body snippet.
     *   `status`: HTTP response status code (`Integer`, on `wire_receive`).
     *   `uploadStatus`: Value of `X-Goog-Upload-Status` response header.
-    *   `sizeReceived`: Parsed integer value of `X-Goog-Upload-Size-Received` response header.
-    *   `granularity`: Parsed integer value of `X-Goog-Upload-Chunk-Granularity` response header (`wire_receive`).
+    *   `sizeReceived`: Parsed integer value of `X-Goog-Upload-Size-Received` response header. Present only when the header parses as a positive integer; a malformed value is still visible in `headers`.
+    *   `granularity`: Parsed integer value of `X-Goog-Upload-Chunk-Granularity` response header (`wire_receive`). Present only when the header parses as a positive integer.
     *   `kind`: Transport failure classification symbol (`:timeout`, `:connection_failed`, `:retries_exhausted`, `:unknown`).
     *   `error`: Exception message string (`wire_failure`).
 *   **Recovery Backoff Fields** (`recovery_backoff`):
