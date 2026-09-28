@@ -1,5 +1,11 @@
 # Release History
 
+### 1.4.1 (2026-09-28)
+
+#### Bug Fixes
+
+* validate path parameters and prevent traversal/injection in REST transcoder ([#67](https://github.com/googleapis/ruby-core-libraries/issues/67)) 
+
 ### 1.4.0 (2026-09-23)
 
 #### Features
