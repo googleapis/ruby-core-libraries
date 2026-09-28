@@ -111,16 +111,55 @@ module Gapic
       # @return [Hash{String, String}]
       #   Name to value hash of the variables for the uri template expansion.
       #   The values are percent-escaped with slashes potentially preserved.
+      # @raise [Gapic::Common::Error] If any parameter value fails path traversal or injection validation.
       def bind_uri_values! http_binding, request_hash
         http_binding.field_bindings.to_h do |field_binding|
           field_path_camel = field_binding.field_path.split(".").map { |part| camel_name_for part }.join(".")
           field_value = extract_scalar_value! request_hash, field_path_camel, field_binding.regex
 
           if field_value
+            validate_field_binding! field_binding, field_value
             field_value = field_value.split("/").map { |segment| percent_escape segment }.join("/")
           end
 
           [field_binding.field_path, field_value]
+        end
+      end
+
+      # Validates a user-supplied parameter value bound to a standard (*) or path (**) URI template variable
+      # to prevent directory traversal exploits.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to validate.
+      # @raise [Gapic::Common::Error] If validation fails.
+      def validate_field_binding! field_binding, field_value
+        validate_path_binding! field_binding, field_value
+      end
+
+      # Validates standard (*) and path (**) parameters by ensuring that no segment in the parameter
+      # value is a directory traversal segment (. or ..).
+      #
+      # Validation Mechanism:
+      # 1. Splits the parameter value by slash (`/`) using `-1` limit to preserve all segments.
+      # 2. Checks each segment. If any segment matches `.` or `..`, it immediately raises
+      #    a `Gapic::Common::Error`, aborting the request.
+      # 3. Empty segments (e.g. duplicate slashes `//` or trailing slashes `/`) are allowed
+      #    by this validator and passed to the server, which handles normalization or returns 400.
+      #
+      # @param field_binding [HttpBinding::FieldBinding] The field binding template metadata.
+      # @param field_value [String] The parameter value to validate.
+      # @raise [Gapic::Common::Error] If validation fails.
+      def validate_path_binding! field_binding, field_value
+        segments = field_value.split("/", -1)
+        segments.each do |segment|
+          next unless [".", ".."].include? segment
+          if field_binding.preserve_slashes
+            raise ::Gapic::Common::Error,
+                  "Value for #{field_binding.field_path} must not contain segments that are exactly '#{segment}'."
+          else
+            raise ::Gapic::Common::Error,
+                  "Invalid value for #{field_binding.field_path} '#{segment}'."
+          end
         end
       end
 
