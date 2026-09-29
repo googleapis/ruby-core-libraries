@@ -22,6 +22,9 @@ module Gapic
   module Rest
     # Gapic REST exception class
     class Error < ::Gapic::Common::Error
+      # @private
+      REST_ERROR_PREFIX = "An error has occurred when making a REST request".freeze
+
       # @return [Integer, nil] the http status code for the error
       attr_reader :status_code
       # @return [Object, nil] the text representation of status as parsed from the response body
@@ -79,7 +82,7 @@ module Gapic
 
           if err.response_body
             msg, code, status, details = try_parse_from_body err.response_body
-            message = "An error has occurred when making a REST request: #{msg}" unless msg.nil?
+            message = "#{REST_ERROR_PREFIX}: #{msg}" unless msg.nil?
             status_code = code unless code.nil?
           end
 

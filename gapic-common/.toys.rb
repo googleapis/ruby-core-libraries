@@ -30,10 +30,6 @@ expand :yardoc do |t|
 end
 tool "yard", delegate_to: "yardoc"
 
-expand :gem_build
-
-expand :gem_build, name: "install", install_gem: true
-
 tool "ci" do
   include :exec, e: true
   include :terminal

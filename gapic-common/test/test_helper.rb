@@ -15,6 +15,7 @@
 gem "minitest"
 require "minitest/autorun"
 require "minitest/focus"
+require "minitest/mock"
 require "minitest/rg"
 require "pp"
 
@@ -126,4 +127,28 @@ def spoof_logging_env enabled: nil, cloud_run: false
   end
 ensure
   ENV["GOOGLE_SDK_RUBY_LOGGING_GEMS"] = old_enabled
+end
+
+class RecordingLogger < Logger
+  Entry = Data.define :severity, :message
+
+  attr_reader :entries
+
+  def initialize
+    super nil
+    @entries = []
+  end
+
+  def add severity, message = nil, progname = nil
+    msg = block_given? ? yield : (message || progname)
+    @entries << Entry.new(severity: severity, message: msg)
+  end
+end
+
+def log_corpus recording_logger
+  formatter = Google::Logging::StructuredFormatter.new
+  recording_logger.entries.map do |entry|
+    sev = Logger::SEV_LABEL[entry.severity] || "INFO"
+    formatter.call sev, Time.now, nil, entry.message
+  end.join
 end

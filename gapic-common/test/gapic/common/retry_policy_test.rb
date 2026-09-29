@@ -158,5 +158,35 @@ class RetryPolicyTest < Minitest::Test
     retriable_error = GRPC::BadStatus.new GRPC::Core::StatusCodes::UNAVAILABLE, "unavailable"
     assert retry_policy.call(retriable_error)
   end
+
+  def test_overrides_reports_every_setting_the_caller_supplied
+    predicate = ->(_error) { true }
+    retry_policy = Gapic::Common::RetryPolicy.new(
+      initial_delay: 2, max_delay: 20, multiplier: 1.7,
+      retry_codes: [GRPC::Core::StatusCodes::UNAVAILABLE], timeout: 600, jitter: 0,
+      retry_predicate: predicate
+    )
+
+    expected = {
+      initial_delay:   2,
+      max_delay:       20,
+      multiplier:      1.7,
+      retry_codes:     [GRPC::Core::StatusCodes::UNAVAILABLE],
+      timeout:         600,
+      jitter:          0,
+      retry_predicate: predicate
+    }
+    assert_equal expected, retry_policy.overrides
+  end
+
+  # An empty retry_codes list counts as unset: it retries nothing, exactly as silence does.
+  def test_overrides_omits_settings_the_caller_never_supplied
+    retry_policy = Gapic::Common::RetryPolicy.new retry_codes: []
+
+    assert_empty retry_policy.overrides
+    # The readers substitute defaults, which is precisely what overrides must not report.
+    assert_equal Gapic::Common::RetryPolicy::DEFAULT_MAX_DELAY, retry_policy.max_delay
+    assert_equal Gapic::Common::RetryPolicy::DEFAULT_RETRY_CODES, retry_policy.retry_codes
+  end
 end
 
