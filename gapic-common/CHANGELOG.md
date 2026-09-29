@@ -1,5 +1,14 @@
 # Release History
 
+### 1.5.0 (2026-09-29)
+
+#### Features
+
+* Resumable Media Upload functionality implementation ([#72](https://github.com/googleapis/ruby-core-libraries/issues/72)) 
+#### Documentation
+
+* remove stale preview notice and disclaimer from READMEs ([#77](https://github.com/googleapis/ruby-core-libraries/issues/77)) 
+
 ### 1.4.1 (2026-09-28)
 
 #### Bug Fixes
