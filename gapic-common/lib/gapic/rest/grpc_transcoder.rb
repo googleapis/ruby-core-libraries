@@ -111,7 +111,7 @@ module Gapic
       # @return [Hash{String, String}]
       #   Name to value hash of the variables for the uri template expansion.
       #   The values are percent-escaped with slashes potentially preserved.
-      # @raise [Gapic::Common::Error] If any parameter value fails path traversal or injection validation.
+      # @raise [Gapic::Common::Error] If any parameter value fails path traversal validation.
       def bind_uri_values! http_binding, request_hash
         http_binding.field_bindings.to_h do |field_binding|
           field_path_camel = field_binding.field_path.split(".").map { |part| camel_name_for part }.join(".")
@@ -252,7 +252,7 @@ module Gapic
       # Returns nil if:
       # - the field is not found
       # - the field is a Message or an array,
-      # - the regex does not match
+      # - the regex does not match the entire string representation
       # @param request_hash [Hash]
       #   A hash of the GRPC request or the sub-request with the unset
       #   proto3_optional fields removed.
@@ -266,7 +266,9 @@ module Gapic
 
         # Covers the case where in `foo.bar.baz`, `baz` is still a submessage or an array.
         return nil if value.is_a?(::Hash) || value.is_a?(::Array)
-        value.to_s if value.to_s =~ regex
+        str = value.to_s
+        match = regex.match str
+        str if match && match.pre_match.empty? && match.post_match.empty?
       end
 
       # Finds a value in the hash by path.

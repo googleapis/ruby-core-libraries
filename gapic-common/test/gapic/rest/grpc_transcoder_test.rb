@@ -300,7 +300,7 @@ class GrpcTranscoderTest < Minitest::Test
   end
 
   def test_transcode_validation_parameter_injection
-    # 1. Parameter Injection (Rejection check)
+    # 1. Parameter Injection (percent-escaping check)
     # Proto: post: "/v3/{name=projects/*/locations/*/agents/*/sessions/*}:detectIntent"
     # Template: v3/{name}:detectIntent (representing Dialogflow session method)
     transcoder_inj = Gapic::Rest::GrpcTranscoder.new.with_bindings(
@@ -321,6 +321,43 @@ class GrpcTranscoderTest < Minitest::Test
     _uri_method, uri, _query_params, _body =
       transcoder_inj.transcode example_request(name: "projects/p/locations/l/agents/a/sessions/s1#frag")
     assert_equal "/v3/projects/p/locations/l/agents/a/sessions/s1%23frag:detectIntent", uri
+  end
+
+  def test_transcode_requires_full_value_match
+    transcoder_std = Gapic::Rest::GrpcTranscoder.new.with_bindings(
+      uri_method: :post,
+      uri_template: "/v1/{name}:getIamPolicy",
+      matches: [["name", %r{^projects/[^/]+/secrets/[^/]+$}, false]]
+    )
+
+    ["projects/p/secrets/s\n/versions/1", "x\nprojects/p/secrets/s"].each do |name|
+      err = assert_raises ::Gapic::Common::Error do
+        transcoder_std.transcode example_request(name: name)
+      end
+      assert_includes err.message, "does not match any transcoding template"
+    end
+
+    _uri_method, uri, _query_params, _body =
+      transcoder_std.transcode example_request(name: "projects/p/secrets/s\nt")
+    assert_equal "/v1/projects/p/secrets/s%0At:getIamPolicy", uri
+
+    _uri_method, uri, _query_params, _body =
+      transcoder_std.transcode example_request(name: "projects/p/secrets/s\n")
+    assert_equal "/v1/projects/p/secrets/s%0A:getIamPolicy", uri
+
+    transcoder_wild = Gapic::Rest::GrpcTranscoder.new.with_bindings(
+      uri_method: :post,
+      uri_template: "/v1/{name}/{sub_request.name}",
+      matches: [
+        ["name", %r{^projects/[^/]+/databases/[^/]+/documents/[^/]+(?:/(?<__wildcard__>.*))?$}, true],
+        ["sub_request.name", %r{^[^/]+$}, false]
+      ]
+    )
+
+    err = assert_raises ::Gapic::Common::Error do
+      transcoder_wild.transcode example_request(name: "x\nprojects/p/databases/d/documents/doc/a", sub_name: "col")
+    end
+    assert_includes err.message, "does not match any transcoding template"
   end
 
   def test_transcode_validation_standard_wildcard
