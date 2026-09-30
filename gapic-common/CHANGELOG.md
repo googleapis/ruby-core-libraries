@@ -1,5 +1,11 @@
 # Release History
 
+### 1.5.1 (2026-09-30)
+
+#### Bug Fixes
+
+* tighten path template matching in the REST transcoder ([#83](https://github.com/googleapis/ruby-core-libraries/issues/83)) 
+
 ### 1.5.0 (2026-09-29)
 
 #### Features
