@@ -3,7 +3,8 @@
 /.vscode/
 /.yardoc
 /_yardoc/
-/bin/
+/bin/*
+!/bin/ci
 /coverage/
 /doc/
 /pkg/

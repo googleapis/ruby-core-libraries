@@ -1,25 +1,25 @@
 # Integration Tests
 
-This directory contains integration tests for `gapic-common`, executed against a running `gapic-showcase` server via the `toys test-integration` command.
+This directory contains integration tests for `gapic-common`, executed against a running `gapic-showcase` server via the `test-integration` Rake task.
 
 ## Running Integration Tests
 
 ```bash
-toys test-integration
+bundle exec rake test-integration
 ```
 
 You can pass standard Minitest flags to filter or seed test runs:
 
 ```bash
-toys test-integration --name /resumable_upload/ --seed 1234
+bundle exec rake test-integration TESTOPTS="--name=/ErrorRecoveryTest/ --seed=1234"
 ```
 
 ## Showcase Server Management & Lifecycle
 
-The `toys test-integration` command (`.toys/test-integration.rb`) manages the `gapic-showcase` server lifecycle automatically:
+The `test-integration` task (defined in the gem's `Rakefile`) manages the `gapic-showcase` server lifecycle automatically:
 
 1. **Existing Endpoint (`SHOWCASE_ENDPOINT`)**:
-   - If `ENV["SHOWCASE_ENDPOINT"]` is present and non-empty, `toys test-integration` skips binary resolution and runs the Minitest suite directly against that endpoint.
+   - If `ENV["SHOWCASE_ENDPOINT"]` is present and non-empty, `test-integration` skips binary resolution and runs the Minitest suite directly against that endpoint.
 
 2. **Binary Resolution (`SHOWCASE_BIN` / `PATH`)**:
    - When `SHOWCASE_ENDPOINT` is not set, the runner checks `ENV["SHOWCASE_BIN"]` first, then searches `ENV["PATH"]` for an executable `gapic-showcase` binary.
@@ -46,6 +46,6 @@ Each integration test captures `DEBUG`-level client and driver logs into an in-m
 - **Force Log Dump (`SHOWCASE_LOG`)**: Set `SHOWCASE_LOG=1` (or any non-empty value) to dump the captured trace for all executed tests, including passing ones:
 
 ```bash
-SHOWCASE_LOG=1 toys test-integration
+SHOWCASE_LOG=1 bundle exec rake test-integration
 ```
 
