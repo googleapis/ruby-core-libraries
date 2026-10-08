@@ -1,0 +1,77 @@
+# frozen_string_literal: true
+
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+require "bundler/gem_tasks"
+require "open3"
+require "rake/clean"
+require "rake/testtask"
+require "rubocop/rake_task"
+require "yard"
+
+# The entries in .gitignore.
+CLEAN.include "**/.DS_STORE", "**/.bundle", ".yardoc", "_yardoc", "doc", "pkg", "spec/reports", "tmp",
+              "**/*.bundle", "**/*.so", "**/*.o", "**/*.a", "**/mkmf.log", "**/vendor", "**/*~",
+              "**/.idea", "**/*.iml"
+
+Rake::TestTask.new :test do |t|
+  t.libs = ["lib", "test"]
+  t.test_files = FileList["test/**/*_test.rb"]
+end
+
+RuboCop::RakeTask.new
+
+desc "Generate YARD documentation (YARDOC_OUTPUT=false only checks for warnings)"
+YARD::Rake::YardocTask.new :yardoc do |t|
+  t.options = ["--fail-on-warning", "--no-stats"]
+  t.options << "--no-output" if ENV["YARDOC_OUTPUT"] == "false"
+  # Also fail if `yard stats --list-undoc` reports undocumented objects.
+  t.after = lambda do
+    stats, status = Open3.capture2 RbConfig.ruby, "-e",
+                                   "require 'yard'; YARD::CLI::Stats.run('--list-undoc', '--use-cache')"
+    puts stats
+    abort "Yardoc encountered errors" unless status.success?
+    abort "Yardoc encountered undocumented objects" if stats =~ /Undocumented\sObjects:/
+  end
+end
+
+desc "Alias for yardoc, used by the release tooling"
+task yard: :yardoc
+
+desc "Check the links in the generated documentation (run `rake yard` first)"
+task :linkinator do
+  gem_name = File.basename __dir__
+  skip_regexes = [
+    "\\w+\\.md$",
+    "^https://rubygems\\.org/gems/#{gem_name}",
+    "^https://cloud\\.google\\.com/ruby/docs/reference/#{gem_name}/latest$",
+    "^https://rubydoc\\.info/gems/#{gem_name}"
+  ]
+  # Run from the repository root, where CI installs linkinator.
+  cmd = ["npx", "linkinator", "./#{gem_name}/doc", "--retry-errors", "--skip", skip_regexes.join(" ")]
+  output = +""
+  status = Open3.popen2e(*cmd, chdir: File.dirname(__dir__)) do |stdin, out, wait|
+    stdin.close
+    out.each_line do |line|
+      print line
+      output << line
+    end
+    wait.value
+  end
+  exit status.exitstatus || 1 unless status.success?
+  broken = output.lines.select { |line| line =~ /^\[(\d+)\]/ && !["200", "202"].include?(Regexp.last_match(1)) }
+  broken.each { |line| puts line }
+  exit 1 unless broken.empty?
+end

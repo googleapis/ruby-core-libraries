@@ -26,10 +26,11 @@ In order to run the project's tests, there is a small amount of setup:
 1. Install Ruby.
     ruby-core-libraries requires Ruby 3.0+. You may choose to manage your Ruby and gem installations with [rbenv](https://github.com/rbenv/rbenv), [chruby](https://github.com/postmodern/chruby), or [asdf](https://asdf-vm.com/)
 
-2. Install [Toys](http://github.com/dazuma/toys). The test scripts are written using this tool.
+2. Install the dependencies of the package you are working on. The test tasks are written using [Rake](https://github.com/ruby/rake), which is part of each package's bundle.
 
     ```sh
-    $ gem install toys
+    $ cd <package-name>
+    $ bundle install
     ```
 
 #### Unit Tests
@@ -40,13 +41,13 @@ To run the unit tests for a package:
 
 ``` sh
 $ cd <package-name>
-$ toys test
+$ bundle exec rake test
 ```
 
 Or, from the root directory of the repository:
 
 ``` sh
-$ toys ci --gems=<package-name> --test
+$ bin/ci --gems=<package-name> --test
 ```
 
 New code contributions should come with unit tests. Generally we prefer unit tests use spec-style `describe` and `it` blocks, but use assertions rather than spec-style expectations.
@@ -62,13 +63,13 @@ You can check your code against these rules by running Rubocop like so:
 
 ```sh
 $ cd <package-name>
-$ toys rubocop
+$ bundle exec rake rubocop
 ```
 
 Or, from the root directory of the repository:
 
 ``` sh
-$ toys ci --gems=<package-name> --rubocop
+$ bin/ci --gems=<package-name> --rubocop
 ```
 
 #### Documentation Tests
@@ -79,13 +80,13 @@ To run the documentation tests for a package:
 
 ``` sh
 $ cd <package-name>
-$ toys yardoc
+$ bundle exec rake yardoc
 ```
 
 Or, from the root directory of the repository:
 
 ``` sh
-$ toys ci --gems=<package-name> --yardoc
+$ bin/ci --gems=<package-name> --yard
 ```
 
 #### Running all tests
@@ -93,19 +94,19 @@ $ toys ci --gems=<package-name> --yardoc
 To run all checks for all packages in this repo, including unit tests, code style checks, and build and documentation tests:
 
 ``` sh
-$ toys ci --all-gems --all-tasks
+$ bin/ci --all-gems --all-tasks
 ```
 
 To run all checks for a single gem:
 
 ``` sh
-$ toys ci --gems=<package-name> --all-tasks
+$ bin/ci --gems=<package-name> --all-tasks
 ```
 
 For more information:
 
 ``` sh
-$ toys ci --help
+$ bin/ci --help
 ```
 
 ## Code of Conduct
