@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.3.1 (2026-10-08)
+
+#### Documentation
+
+* remove stale preview notice and disclaimer from READMEs ([#77](https://github.com/googleapis/ruby-core-libraries/issues/77)) 
+
 ### 0.3.0 (2025-04-30)
 
 #### Features
