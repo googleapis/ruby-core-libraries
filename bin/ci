@@ -1,0 +1,391 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+require "json"
+require "open3"
+require "optparse"
+require "rbconfig"
+
+##
+# Runs CI tasks for the gems in this repository. For each selected gem it runs
+# `bundle install`, then `bundle exec rake <task>` for each task, collects the
+# failures and reports them at the end. Gems are selected from the command
+# line, from the GitHub event, or from the files changed locally.
+#
+# This replaces `toys ci` and takes the same flags. It uses only default gems,
+# so it runs with a plain `ruby`, outside any bundle. Run `bin/ci --help` for
+# usage.
+#
+class CI
+  TASKS = ["test", "rubocop", "build", "yard", "linkinator"].freeze
+  ROOT = File.expand_path "..", __dir__
+  STYLES = { bold: 1, red: 31, green: 32, yellow: 33, cyan: 36 }.freeze
+  # Variables that `bundle exec` sets. Unset, so that each gem's commands use
+  # that gem's own Gemfile.
+  BUNDLE_EXEC_VARS = ["BUNDLE_GEMFILE", "BUNDLE_BIN_PATH", "BUNDLER_SETUP", "BUNDLER_VERSION"].freeze
+
+  ##
+  # @param argv [Array<String>] The command line arguments.
+  #
+  def initialize argv
+    @cur_dir = Dir.getwd
+    parse_options! argv
+  end
+
+  ##
+  # Run the selected tasks, and exit with status 1 if any of them failed.
+  #
+  def main
+    $stdout.sync = true
+    Dir.chdir ROOT
+    @run_tasks, @bundle_task = determine_tasks
+    @errors = []
+    determine_dirs.shuffle.each { |dir| run_in_dir dir }
+    handle_results
+  end
+
+  private
+
+  def parse_options! argv
+    @github_event_name = ""
+    @github_event_payload = ""
+    @bundle_retry = 3
+    @task_flags = {}
+    @verbosity = 0
+    parser = OptionParser.new
+    parser.banner = "Usage: bin/ci [FLAGS...]\n\nRun CI tasks."
+    add_change_flags parser
+    add_selection_flags parser
+    add_task_flags parser
+    add_common_flags parser
+    parser.parse! argv
+    raise OptionParser::ParseError, "extra arguments: #{argv.join ' '}" unless argv.empty?
+    raise OptionParser::ParseError, "at least one of the task flags is required" unless @task_flag_given
+  rescue OptionParser::ParseError => e
+    warn e.message
+    warn "Run with --help for usage."
+    exit 2
+  end
+
+  def add_change_flags parser
+    parser.separator ""
+    parser.on "--github-event-name=EVENT", "Name of the github event triggering this job. Optional." do |value|
+      @github_event_name = value
+    end
+    parser.on "--github-event-payload=PATH", "Path to the github event payload JSON file. Optional." do |value|
+      @github_event_payload = value
+    end
+    parser.on "--head=COMMIT", "Ref or SHA of the head commit when analyzing changes.",
+              "Defaults to the current commit." do |value|
+      @head_commit = value
+    end
+    parser.on "--base=COMMIT", "Ref or SHA of the base commit when analyzing changes.",
+              "If omitted, uses uncommitted diffs." do |value|
+      @base_commit = value
+    end
+  end
+
+  def add_selection_flags parser
+    parser.on "--gems=NAMES", Array, "Test the given gems (comma-delimited) instead of analyzing changes." do |value|
+      @gems = value
+    end
+    parser.on "--all-gems[=FILES]", "Test all gems, or all that include at least one of the given files",
+              "(comma-delimited)." do |value|
+      @all_gems = value || true
+    end
+    parser.on "--bundle-retry=RETRIES", Integer,
+              "Number of times to retry bundler network operations (default: 3)" do |value|
+      @bundle_retry = value
+    end
+  end
+
+  def add_task_flags parser
+    parser.separator ""
+    parser.separator "Tasks (at least one is required):"
+    parser.on "--[no-]bundle", "Normally bundle install is performed prior to any other task. Use --no-bundle",
+              "to disable this, or use --bundle to force a bundle install even if no other tasks are run." do |value|
+      @task_flag_given = true
+      @do_bundle = value
+    end
+    parser.on "--bundle-update", "Update rather than install gem bundles." do
+      @task_flag_given = true
+      @bundle_update = true
+    end
+    TASKS.each do |task|
+      parser.on "--[no-]#{task}", "Run the #{task} task" do |value|
+        @task_flag_given = true
+        @task_flags[task] = value
+      end
+    end
+    parser.on "--all-tasks", "Run all tasks." do
+      @task_flag_given = true
+      @all_tasks = true
+    end
+  end
+
+  def add_common_flags parser
+    parser.separator ""
+    parser.on("-v", "--verbose", "Increase verbosity") { @verbosity += 1 }
+    parser.on("-q", "--quiet", "Decrease verbosity") { @verbosity -= 1 }
+    parser.on_tail "-h", "--help", "Show this help" do
+      puts parser
+      exit
+    end
+  end
+
+  def determine_tasks
+    run_tasks = TASKS.find_all do |task|
+      @task_flags.key?(task) ? @task_flags[task] : @all_tasks
+    end
+    bundle_task =
+      if @bundle_update
+        log_info "Will update bundles for tested libraries"
+        "update"
+      elsif @do_bundle == false
+        log_info "Will not install bundles for tested libraries"
+        nil
+      else
+        log_info "Will install bundles for tested libraries"
+        "install"
+      end
+    log_info "Running the following tasks: #{run_tasks.inspect}"
+    [run_tasks, bundle_task]
+  end
+
+  def determine_dirs
+    return @gems if @gems
+    return all_gem_dirs(@all_gems || true) if @all_gems || @github_event_name == "schedule"
+    cur_gem_dir || gem_dirs_from_changes
+  end
+
+  def all_gem_dirs which_files
+    dirs = Dir.glob("*/*.gemspec").map { |file| File.dirname file }
+    if [true, ""].include? which_files
+      say "Running for all gems", :bold
+    else
+      say "Running for all gems with the following files: #{which_files}", :bold
+      dirs.delete_if do |dir|
+        which_files.split(",").none? { |name| File.exist? File.join(dir, name) }
+      end
+    end
+    filter_gem_dirs dirs
+  end
+
+  def cur_gem_dir
+    return nil unless @cur_dir != ROOT && @cur_dir.start_with?(ROOT)
+    dir = @cur_dir.sub "#{ROOT}/", ""
+    dirs = find_changed_directories ["#{dir}/."]
+    return nil if dirs.empty?
+    say "Running in current directory: #{dirs.first}", :bold
+    dirs
+  end
+
+  def gem_dirs_from_changes
+    say "Evaluating changes.", :bold
+    base_ref, head_ref = interpret_github_event
+    ensure_checkout head_ref unless head_ref.nil?
+    files = find_changed_files base_ref
+    list "Files changed:", "No files changed.", files
+    dirs = find_changed_directories files
+    list "Gem directories changed:", "No gem directories changed.", dirs
+    dirs
+  end
+
+  def list heading, empty_message, items
+    if items.empty?
+      say empty_message, :bold
+    else
+      say heading, :bold
+      items.each { |item| puts "  #{item}" }
+    end
+  end
+
+  def interpret_github_event
+    payload = JSON.parse File.read @github_event_payload unless @github_event_payload.empty?
+    base_ref, head_ref =
+      case @github_event_name
+      when "pull_request"
+        log_info "Getting commits from pull_request event"
+        [payload["pull_request"]["base"]["ref"], nil]
+      when "push"
+        log_info "Getting commits from push event"
+        [payload["before"], nil]
+      when "workflow_dispatch"
+        log_info "Getting inputs from workflow_dispatch event"
+        [payload["inputs"]["base"], payload["inputs"]["head"]]
+      else
+        log_info "Using local commits"
+        [@base_commit, @head_commit]
+      end
+    base_ref = nil if base_ref.to_s.empty?
+    head_ref = nil if head_ref.to_s.empty?
+    [base_ref, head_ref]
+  end
+
+  def ensure_checkout head_ref
+    log_info "Checking for head ref: #{head_ref}"
+    head_sha = ensure_fetched head_ref
+    current_sha = capture(["git", "rev-parse", "HEAD"]).strip
+    if head_sha == current_sha
+      log_info "Already at head SHA: #{head_sha}"
+    else
+      log_info "Checking out head SHA: #{head_sha}"
+      run ["git", "checkout", head_sha]
+    end
+  end
+
+  def find_changed_files base_ref
+    if base_ref.nil?
+      log_info "No base ref. Using local diff."
+      capture(["git", "status", "--porcelain"], exit_on_failure: false).split("\n").map { |line| line.split.last }
+    else
+      log_info "Diffing from base ref: #{base_ref}"
+      base_sha = ensure_fetched base_ref
+      capture(["git", "diff", "--name-only", base_sha]).split("\n").map(&:strip)
+    end
+  end
+
+  def ensure_fetched ref
+    out, _err, status = Open3.capture3 "git", "show", "--no-patch", "--format=%H", ref
+    return out.strip if status.success?
+    if ref == "HEAD^"
+      # Common special case
+      current_sha = capture(["git", "rev-parse", "HEAD"]).strip
+      run ["git", "fetch", "--depth=2", "origin", current_sha]
+      capture(["git", "rev-parse", "HEAD^"]).strip
+    else
+      log_info "Fetching ref: #{ref}"
+      run ["git", "fetch", "--depth=1", "origin", "#{ref}:refs/temp/#{ref}"]
+      capture(["git", "show", "--no-patch", "--format=%H", "refs/temp/#{ref}"]).strip
+    end
+  end
+
+  def find_changed_directories files
+    dirs = []
+    files.each do |file|
+      next unless file =~ %r{^([^/]+)/.+$}
+      dir = Regexp.last_match 1
+      dirs << dir
+      next unless dir =~ /^(.+)-v\d[^-]*$/
+      wrapper_dir = Regexp.last_match 1
+      dirs << wrapper_dir if Dir.exist? wrapper_dir
+    end
+    filter_gem_dirs dirs.uniq
+  end
+
+  # Keep the directories that hold a gem whose required_ruby_version admits
+  # the running Ruby. The gemspec is loaded in a separate Ruby process so it
+  # cannot change this one (gemspecs add to the load path and require files).
+  def filter_gem_dirs dirs
+    dirs.find_all do |dir|
+      next false unless ["Gemfile", "#{dir}.gemspec"].all? { |file| File.file? File.join(dir, file) }
+      script = <<~RUBY
+        spec = Gem::Specification.load '#{dir}/#{dir}.gemspec'
+        puts spec.required_ruby_version.satisfied_by? Gem::Version.new(#{RUBY_VERSION.inspect})
+      RUBY
+      capture([RbConfig.ruby], stdin_data: script, exit_on_failure: false).strip == "true"
+    end.sort
+  end
+
+  def run_in_dir dir
+    Dir.chdir dir do
+      if @bundle_task
+        puts
+        say "#{dir}: bundle ...", :bold, :cyan
+        unless run_unbundled(["bundle", @bundle_task, "--retry=#{@bundle_retry}"]).success?
+          @errors << [dir, "bundle"]
+          next
+        end
+      end
+      @run_tasks.each do |task|
+        puts
+        say "#{dir}: #{task} ...", :bold, :cyan
+        @errors << [dir, task] unless run_unbundled(["bundle", "exec", "rake", task], env: task_env(task)).success?
+      end
+    end
+  end
+
+  # `toys ci -v` passed -v on to each task, which made Minitest list every
+  # test. Rake passes Minitest options through TESTOPTS.
+  def task_env task
+    return {} unless task == "test" && @verbosity.positive? && !ENV.key?("TESTOPTS")
+    { "TESTOPTS" => "--verbose" }
+  end
+
+  def handle_results
+    puts
+    if @errors.empty?
+      say "CI passed", :bold, :green
+    else
+      say "FAILURES:", :bold, :red
+      @errors.each { |dir, task| say "#{dir}: #{task}", :yellow }
+      exit 1
+    end
+  end
+
+  # Run a command in the gem's own bundle environment: outside the bundle of
+  # this process if it has one, else with the `bundle exec` variables unset.
+  def run_unbundled cmd, env: {}
+    if defined?(Bundler) && Bundler.respond_to?(:with_unbundled_env)
+      Bundler.with_unbundled_env { run cmd, env: env, exit_on_failure: false }
+    else
+      run cmd, env: BUNDLE_EXEC_VARS.to_h { |name| [name, nil] }.merge(env), exit_on_failure: false
+    end
+  end
+
+  def run cmd, env: {}, exit_on_failure: true
+    log_info "exec: #{cmd.inspect}"
+    system env, *cmd
+    status = Process.last_status
+    exit_with status if exit_on_failure && !status.success?
+    status
+  end
+
+  def capture cmd, exit_on_failure: true, **opts
+    log_info "exec: #{cmd.inspect}"
+    out, status = Open3.capture2(*cmd, **opts)
+    exit_with status if exit_on_failure && !status.success?
+    out
+  rescue Errno::ENOENT
+    log_error "Command not found: #{cmd.first}"
+    exit 127
+  end
+
+  def exit_with status
+    log_error "Command failed with exit status #{status.exitstatus.inspect}"
+    exit(status.exitstatus || 1)
+  end
+
+  # Print a line to stdout. Styles are always applied, as `toys ci` did, so
+  # that GitHub Actions logs show them.
+  def say text, *styles
+    codes = styles.map { |style| STYLES.fetch style }
+    puts codes.empty? ? text : "\e[#{codes.join ';'}m#{text}\e[0m"
+  end
+
+  # Informational messages go to stderr, and only with -v.
+  def log_info message
+    warn "[INFO] #{message}" if @verbosity.positive?
+  end
+
+  # Errors go to stderr unless -qq.
+  def log_error message
+    warn "[ERROR] #{message}" if @verbosity >= -1
+  end
+end
+
+CI.new(ARGV).main

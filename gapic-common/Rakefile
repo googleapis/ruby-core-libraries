@@ -1,0 +1,199 @@
+# frozen_string_literal: true
+
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+require "bundler/gem_tasks"
+require "open3"
+require "rake/clean"
+require "rake/testtask"
+require "rubocop/rake_task"
+require "socket"
+require "tmpdir"
+require "yard"
+
+# The entries in .gitignore.
+CLEAN.include "**/.DS_STORE", "**/.bundle", ".yardoc", "_yardoc", "doc", "pkg", "spec/reports", "tmp",
+              "**/*.bundle", "**/*.so", "**/*.o", "**/*.a", "**/mkmf.log", "**/vendor", "**/*~",
+              "**/.idea", "**/*.iml"
+
+Rake::TestTask.new :test do |t|
+  t.libs = ["lib", "test"]
+  t.test_files = FileList["test/**/*_test.rb"]
+end
+
+RuboCop::RakeTask.new
+
+desc "Generate YARD documentation (YARDOC_OUTPUT=false only checks for warnings)"
+YARD::Rake::YardocTask.new :yardoc do |t|
+  # TODO: Also fail on undocumented objects, as the other gems in this
+  # repository do, once gapic-common documents all of its public API.
+  t.options = ["--fail-on-warning"]
+  t.options << "--no-output" if ENV["YARDOC_OUTPUT"] == "false"
+end
+
+desc "Alias for yardoc, used by the release tooling"
+task yard: :yardoc
+
+desc "Check the links in the generated documentation (run `rake yard` first)"
+task :linkinator do
+  gem_name = File.basename __dir__
+  skip_regexes = [
+    "\\w+\\.md$",
+    "^https://rubygems\\.org/gems/#{gem_name}",
+    "^https://cloud\\.google\\.com/ruby/docs/reference/#{gem_name}/latest$",
+    "^https://rubydoc\\.info/gems/#{gem_name}"
+  ]
+  # Run from the repository root, where CI installs linkinator.
+  cmd = ["npx", "linkinator", "./#{gem_name}/doc", "--retry-errors", "--skip", skip_regexes.join(" ")]
+  output = +""
+  status = Open3.popen2e(*cmd, chdir: File.dirname(__dir__)) do |stdin, out, wait|
+    stdin.close
+    out.each_line do |line|
+      print line
+      output << line
+    end
+    wait.value
+  end
+  exit status.exitstatus || 1 unless status.success?
+  broken = output.lines.select { |line| line =~ /^\[(\d+)\]/ && !["200", "202"].include?(Regexp.last_match(1)) }
+  broken.each { |line| puts line }
+  exit 1 unless broken.empty?
+end
+
+desc "Run rubocop, test and yardoc"
+task ci: ["rubocop", "test", "yardoc"]
+
+desc "Regenerate the protobuf fixtures in test/fixtures"
+task :fixtures do
+  protos = Dir.glob "*.proto", base: "test/fixtures"
+  sh "grpc_tools_ruby_protoc", "--ruby_out=test/fixtures", "-I", "test/fixtures", *protos
+end
+
+# Runs the integration tests. Hidden from `rake -T`; use `test-integration`,
+# which provides a gapic-showcase server first.
+Rake::TestTask.new :integration_tests do |t|
+  t.description = nil
+  t.libs = ["lib", "integration"]
+  t.test_files = FileList["integration/**/*_test.rb"]
+end
+
+##
+# Manages the gapic-showcase server that the integration tests run against.
+# See integration/README.md.
+#
+module ShowcaseServer
+  MIN_VERSION = Gem::Version.new "0.43"
+
+  class << self
+    ##
+    # Yield with `SHOWCASE_ENDPOINT` pointing at a gapic-showcase server.
+    #
+    # An existing `SHOWCASE_ENDPOINT` is used as is. Otherwise this starts the
+    # binary named by `SHOWCASE_BIN` (or found on `PATH`) in its own process
+    # group and stops it afterwards. With neither, it skips the block, unless
+    # `CI` is set, in which case it fails.
+    #
+    def with_server(&)
+      return yield unless ENV["SHOWCASE_ENDPOINT"].to_s.empty?
+      bin = resolve_bin
+      if bin.nil?
+        abort "No SHOWCASE_ENDPOINT or gapic-showcase binary found in CI environment." unless ENV["CI"].to_s.empty?
+        warn "Skipping integration tests: no SHOWCASE_ENDPOINT or gapic-showcase binary found."
+        return
+      end
+      verify_version! bin
+      run_server(bin, &)
+    end
+
+    private
+
+    def resolve_bin
+      env_bin = ENV["SHOWCASE_BIN"].to_s
+      return env_bin unless env_bin.empty?
+      ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).each do |dir|
+        candidate = File.join dir, "gapic-showcase"
+        return candidate if File.executable?(candidate) && !File.directory?(candidate)
+      end
+      nil
+    end
+
+    def verify_version! bin
+      output = begin
+        IO.popen([bin, "--version"], err: [:child, :out], &:read).strip
+      rescue StandardError => e
+        abort "Failed to execute '#{bin} --version': #{e.message}"
+      end
+      version = output[/\d+\.\d+(?:\.\d+)*/]
+      abort "Could not parse version from '#{bin} --version' output: #{output.inspect}" if version.nil?
+      return if Gem::Version.new(version) >= MIN_VERSION
+      abort "gapic-showcase version #{version} is too old (minimum required is #{MIN_VERSION})."
+    end
+
+    def run_server bin
+      port = allocate_port
+      fallback_port = allocate_port
+      log_path = File.join Dir.tmpdir, "gapic-showcase-#{Process.pid}-#{Time.now.to_i}.log"
+      pid = Process.spawn bin, "run", "--port", ":#{port}", "--fallback-port", ":#{fallback_port}",
+                          out: log_path, err: log_path, pgroup: true
+      begin
+        wait_for_server! pid, port, log_path
+        ENV["SHOWCASE_ENDPOINT"] = "http://localhost:#{port}"
+        yield
+      ensure
+        stop_server pid
+      end
+    end
+
+    def allocate_port
+      server = TCPServer.open "127.0.0.1", 0
+      server.addr[1]
+    ensure
+      server&.close
+    end
+
+    def wait_for_server! pid, port, log_path
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10.0
+      loop do
+        exited_pid, status = Process.waitpid2 pid, Process::WNOHANG
+        abort "gapic-showcase exited prematurely (status: #{status.exitstatus}). Log file: #{log_path}" if exited_pid
+        return if listening? port
+        if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+          abort "Timed out waiting 10s for gapic-showcase to listen on port #{port}. Log file: #{log_path}"
+        end
+        sleep 0.1
+      end
+    end
+
+    def listening? port
+      TCPSocket.new("127.0.0.1", port).close
+      true
+    rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+      false
+    end
+
+    def stop_server pid
+      # The negative signal targets the whole process group.
+      Process.kill "-TERM", pid
+      Process.waitpid pid
+    rescue Errno::ESRCH, Errno::ECHILD
+      # Already exited.
+    end
+  end
+end
+
+desc "Run the integration tests against gapic-showcase (see integration/README.md)"
+task "test-integration" do
+  ShowcaseServer.with_server { Rake::Task[:integration_tests].invoke }
+end
