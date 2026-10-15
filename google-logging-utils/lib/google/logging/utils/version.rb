@@ -19,7 +19,7 @@ module Google
   module Logging
     module Utils
       # Library version
-      VERSION = "0.2.0"
+      VERSION = "0.2.1"
     end
   end
 end
