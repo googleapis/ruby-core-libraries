@@ -15,8 +15,101 @@
 require "test_helper"
 
 require "gapic/logging_concerns"
+require "gapic/rest"
+
+module NormalizeServiceFixtures
+  module V1
+    module ExampleService
+      class Stub; end
+
+      module Service
+        def self.service_name
+          "example.v1.ExampleService"
+        end
+      end
+
+      module Rest
+        class ServiceStub; end
+      end
+    end
+  end
+
+  module Plain
+    class Stub; end
+  end
+end
 
 describe Gapic::LoggingConcerns do
+  describe ".normalize_service" do
+    def with_toplevel_constant name, klass
+      name = name.to_sym
+      existed = Object.const_defined? name, false
+      original = Object.const_get name, false if existed
+      Object.send :remove_const, name if existed
+      Object.const_set name, klass
+      yield
+    ensure
+      Object.send :remove_const, name if Object.const_defined? name, false
+      Object.const_set name, original if existed
+    end
+
+    it "returns a string unchanged" do
+      input = "google.example.v1.Foo"
+      assert_equal input, Gapic::LoggingConcerns.normalize_service(input)
+    end
+
+    it "returns nil for an unrecognized input" do
+      assert_nil Gapic::LoggingConcerns.normalize_service(nil)
+      assert_nil Gapic::LoggingConcerns.normalize_service(:symbol)
+    end
+
+    it "uses a sibling Service.service_name for gRPC stubs" do
+      result = Gapic::LoggingConcerns.normalize_service NormalizeServiceFixtures::V1::ExampleService::Stub
+      assert_equal "example.v1.ExampleService", result
+    end
+
+    it "falls back to a dotted name for REST stubs" do
+      result = Gapic::LoggingConcerns.normalize_service(
+        NormalizeServiceFixtures::V1::ExampleService::Rest::ServiceStub
+      )
+      assert_equal "NormalizeServiceFixtures.V1.ExampleService", result
+    end
+
+    it "ignores an unrelated top-level Service when resolving REST stubs" do
+      with_toplevel_constant :Service, Class.new do
+        result = Gapic::LoggingConcerns.normalize_service(
+          NormalizeServiceFixtures::V1::ExampleService::Rest::ServiceStub
+        )
+        assert_equal "NormalizeServiceFixtures.V1.ExampleService", result
+      end
+    end
+
+    it "still uses a sibling Service when an unrelated top-level Service exists" do
+      with_toplevel_constant :Service, Class.new do
+        result = Gapic::LoggingConcerns.normalize_service NormalizeServiceFixtures::V1::ExampleService::Stub
+        assert_equal "example.v1.ExampleService", result
+      end
+    end
+
+    it "does not treat a top-level Rest as a REST namespace" do
+      with_toplevel_constant :Rest, Class.new do
+        result = Gapic::LoggingConcerns.normalize_service NormalizeServiceFixtures::Plain::Stub
+        assert_nil result
+      end
+    end
+
+    it "does not raise when constructing a REST client stub if a top-level Service exists" do
+      rest_stub = NormalizeServiceFixtures::V1::ExampleService::Rest::ServiceStub
+      with_toplevel_constant :Service, Class.new do
+        stub = Gapic::Rest::ClientStub.new endpoint: "google.example.com",
+                                           credentials: :dummy_credentials,
+                                           service_name: rest_stub,
+                                           logger: nil
+        assert_nil stub.logger
+      end
+    end
+  end
+
   describe "random_uuid4" do
     it "outputs the correct format" do
       output = Gapic::LoggingConcerns.random_uuid4
