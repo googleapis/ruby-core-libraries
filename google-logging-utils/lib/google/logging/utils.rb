@@ -18,6 +18,8 @@ require "google/logging/utils/version"
 require "google/logging/message"
 require "google/logging/source_location"
 require "google/logging/structured_formatter"
+require "google/logging/google_sdk_filtered_logger"
+require "google/logging/google_sdk_logger_delegator"
 
 ##
 # Google products namespace
