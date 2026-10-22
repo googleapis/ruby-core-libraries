@@ -1,5 +1,14 @@
 # Release History
 
+### 1.6.0 (2026-10-22)
+
+#### Features
+
+* require grpc &gt;= 1.84.1 ([#90](https://github.com/googleapis/ruby-core-libraries/issues/90)) 
+#### Bug Fixes
+
+* ignore inherited Service constants in normalize_service ([#71](https://github.com/googleapis/ruby-core-libraries/issues/71)) ([47c7e98](https://github.com/googleapis/ruby-core-libraries/commit/47c7e9854904caa59955aab31a6fdacd0af200b8)), refs [#70](https://github.com/googleapis/ruby-core-libraries/issues/70)
+
 ### 1.5.1 (2026-09-30)
 
 #### Bug Fixes
