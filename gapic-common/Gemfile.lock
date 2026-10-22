@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    gapic-common (1.3.0)
+    gapic-common (1.5.1)
       faraday (>= 1.9, < 3.a)
       faraday-retry (>= 1.0, < 3.a)
       google-cloud-env (~> 2.2)
@@ -10,7 +10,7 @@ PATH
       googleapis-common-protos (~> 1.6)
       googleapis-common-protos-types (~> 1.15)
       googleauth (~> 1.12)
-      grpc (>= 1.83, < 2.a)
+      grpc (>= 1.84.1, < 2.a)
 
 GEM
   remote: https://rubygems.org/
@@ -82,31 +82,31 @@ GEM
       os (>= 0.9, < 2.0)
       pstore (~> 0.1)
       signet (>= 0.16, < 2.a)
-    grpc (1.83.0)
+    grpc (1.84.1)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-aarch64-linux-gnu)
+    grpc (1.84.1-aarch64-linux-gnu)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-aarch64-linux-musl)
+    grpc (1.84.1-aarch64-linux-musl)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-arm64-darwin)
+    grpc (1.84.1-arm64-darwin)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-x86-linux-gnu)
+    grpc (1.84.1-x86-linux-gnu)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-x86-linux-musl)
+    grpc (1.84.1-x86-linux-musl)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-x86_64-darwin)
+    grpc (1.84.1-x86_64-darwin)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-x86_64-linux-gnu)
+    grpc (1.84.1-x86_64-linux-gnu)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
-    grpc (1.83.0-x86_64-linux-musl)
+    grpc (1.84.1-x86_64-linux-musl)
       google-protobuf (>= 3.25, < 5.0)
       googleapis-common-protos-types (~> 1.0)
     grpc-tools (1.83.0)
@@ -221,7 +221,7 @@ CHECKSUMS
   faraday (2.14.3) sha256=1882247e6766615c8220b4392bf1d27f6ebb63d8e28267587cef1fb0bf37f278
   faraday-net_http (3.4.4) sha256=0e78af151747ed1b00f33e25973b4bc220d7f16c00c39676817c8b12331eb588
   faraday-retry (2.4.0) sha256=7b79c48fb7e56526faf247b12d94a680071ff40c9fda7cf1ec1549439ad11ebe
-  gapic-common (1.3.0)
+  gapic-common (1.5.1)
   google-cloud-core (1.9.0) sha256=ab55409f51488e8deefb6edcc1ce4771dfb5da2fe7b3bc075709a030c2b682a4
   google-cloud-env (2.4.0) sha256=01cb35ecee5d1c4d1cd4deaed8bb5bddc838e296bcc2a35c5d1ddd07ce40d28d
   google-cloud-errors (1.7.0) sha256=6e682f42d89aae08689f36f28495de629d756da076bafff0003bac7f8042ebb3
@@ -239,15 +239,15 @@ CHECKSUMS
   googleapis-common-protos (1.10.0) sha256=13e47ad0ce85d3d30065c03863efd302a82b0e08ba576f2a9b9dbbfeecb57ee0
   googleapis-common-protos-types (1.23.0) sha256=992e740a523794d9fc5f29a504465d8fc737aaa16c930fe7228e3346860faf0a
   googleauth (1.17.3) sha256=9a655455885c0c17a8b70537acd2a992a7c7842c43c06c6612dfb0d93e755d58
-  grpc (1.83.0) sha256=38119e7f9f7cbc98e79145201da4be470a7542b0befad454651d35015ea55c59
-  grpc (1.83.0-aarch64-linux-gnu) sha256=11562efdded494b2277fd9c3c530dfdf90177faa111526ae9e748d0be29f1a9d
-  grpc (1.83.0-aarch64-linux-musl) sha256=ee745eab4f3922ed27d379cbc4bc0a99e58db367fa96312e9fe258aafd3afeb2
-  grpc (1.83.0-arm64-darwin) sha256=25dd772aa80529f014d70da069787cd39b469c9edacbe493da4ff19952a147e2
-  grpc (1.83.0-x86-linux-gnu) sha256=e9b20f54b8e8915f3921f12b266742e79da2c31d60e88295e15d0d16ea3cfd55
-  grpc (1.83.0-x86-linux-musl) sha256=868e66d9c2a77eca1a93292fd879565219821fb5888673aedd08154303c9520c
-  grpc (1.83.0-x86_64-darwin) sha256=cfad91d559d1907159a5247fb12dc112a8ea0ebe2027ca7f5ab648d01a645716
-  grpc (1.83.0-x86_64-linux-gnu) sha256=25d66bfa3cb1b05258b3f9632478c7e7ceb52cb16ccc0b4b26d7df36be7158b1
-  grpc (1.83.0-x86_64-linux-musl) sha256=a5023264dbb8038c23b147bbf80adb06932ef11b5ab493412e9e37a43114fa8c
+  grpc (1.84.1) sha256=8cf52d14c593ebdc1c183074d2ddab9ea86a91149e154710e92d0aafc8bb5c60
+  grpc (1.84.1-aarch64-linux-gnu) sha256=c3ff186a2ee2cfbf828dd02b9ade4812a9a15ee83b55eb8d33b98432d7a35da5
+  grpc (1.84.1-aarch64-linux-musl) sha256=aa6c4a4a0566f154e8d18371f75739c79cd0651f4a9ad73e58b4934927abe348
+  grpc (1.84.1-arm64-darwin) sha256=dc5f26345e1b68e2a4e77fbb0c1c3035f426fd337e1f9bdc279e7976686e4d5f
+  grpc (1.84.1-x86-linux-gnu) sha256=af80a60c690bbe71bda9523940d2e8d0ca8caffa9ebaaa9785fd5ce4351d1261
+  grpc (1.84.1-x86-linux-musl) sha256=274f2617ae742fa1df12153ab0014de0da20ba1667c8b7b170996daa54ab9070
+  grpc (1.84.1-x86_64-darwin) sha256=758f10a22db6b42a2807ccb8ec1f925d7c7e31cde1b8907874f6416854400f16
+  grpc (1.84.1-x86_64-linux-gnu) sha256=4b2509e925d03b12591dca80af56cecb33e4ca34e8fd832753eaaa3f58b3a2c4
+  grpc (1.84.1-x86_64-linux-musl) sha256=8a19ac94f73b05ef6b2db76b5901e84786de94a0ddf69b34321fc24c1f289006
   grpc-tools (1.83.0) sha256=d73ad7d181f32aa0bc53b797b55fa9eaca1c3f391bb624ac3d11f4069ce5ee9a
   io-console (0.8.2) sha256=d6e3ae7a7cc7574f4b8893b4fca2162e57a825b223a177b7afa236c5ef9814cc
   json (2.21.2) sha256=1f1d3b7cf2b3ba1a69beca0bb6db13d5438b80bff3cd54cdaaa620b9b07c1c6a
