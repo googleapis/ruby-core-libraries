@@ -1,5 +1,11 @@
 # Release History
 
+### 1.6.1 (2026-10-23)
+
+#### Documentation
+
+* link to the published Ruby version support policy ([#91](https://github.com/googleapis/ruby-core-libraries/issues/91)) 
+
 ### 1.6.0 (2026-10-22)
 
 #### Features
