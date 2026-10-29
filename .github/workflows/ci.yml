@@ -65,7 +65,7 @@ jobs:
     - name: Install NodeJS 24.x
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
-        node-version: "24.x"
+        node-version: "24.x || 26.x"
     - name: Install tools
       # Pinned to the 0.22.x series deliberately: toys 0.23.0 broke the `build`
       # tool ("Could not find a gemspec") and 0.24.0 additionally removed the
