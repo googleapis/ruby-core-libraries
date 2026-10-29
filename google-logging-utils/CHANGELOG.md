@@ -1,5 +1,11 @@
 ## Changelog
 
+### 0.2.2 (2026-10-29)
+
+#### Documentation
+
+* link to the published Ruby version support policy ([#91](https://github.com/googleapis/ruby-core-libraries/issues/91)) 
+
 ### 0.2.1 (2026-10-15)
 
 #### Documentation
