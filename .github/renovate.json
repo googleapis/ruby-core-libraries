@@ -1,4 +1,12 @@
 {
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", ":disableDependencyDashboard"],
-  "rangeStrategy": "widen"
+  "rangeStrategy": "widen",
+  "packageRules": [
+    {
+      "description": "Keep toys pinned to ~> 0.22.0 until the toys migration completes (b/563024235)",
+      "matchPackageNames": ["toys", "toys-core"],
+      "enabled": false
+    }
+  ]
 }
