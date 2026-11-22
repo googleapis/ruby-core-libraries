@@ -179,7 +179,7 @@ module Gapic
       # @param request [Object] The GRPC request.
       # @return [Array{String, Array}] A pair of body and query parameters.
       def construct_body_query_params body_template, request_hash_without_uri, request
-        body = ""
+        body = "".freeze
         query_params = []
 
         if body_template == "*"
